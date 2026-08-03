@@ -48,6 +48,12 @@ input color    InpLineColor     = clrGold;    // Line color
 input int      InpLineWidth     = 2;          // Line width
 input bool      InpAlertOnTouch  = true;       // Sound + popup alert when price touches a line
 
+input group    "=== Python Bridge Levels / خطوط جسر بايثون ==="
+input bool     InpReadPyLevels  = true;        // Read & draw levels pushed by the Python bridge
+input string   InpLevelsFile    = "spircore_levels.csv"; // File in MQL5/Files (Python writes it)
+input int      InpLevelsRefresh = 2;           // Re-read interval (seconds)
+input color    InpPyLineColor   = clrDeepSkyBlue; // Color for Python-pushed lines
+
 input group    "=== Execution / التنفيذ ==="
 input int      InpSlippagePts   = 20;         // Max deviation/slippage in points
 input int      InpModifyRetries = 3;          // Retries for the ECN PositionModify step
@@ -84,6 +90,7 @@ datetime       g_lastLineCalc  = 0;       // last time lines were (re)computed
 bool           g_touchedUpper  = false;   // debounce flags so alert fires once per touch
 bool           g_touchedLower  = false;
 datetime       g_lastSignalBar = 0;       // last bar we evaluated the strategy on
+datetime       g_lastLevelsRead = 0;      // last time the Python levels file was read
 
 // --- Object names (kept in one place for clean create/delete) -------
 #define OBJ_PREFIX     "SPIRCORE_"
@@ -168,6 +175,63 @@ void OnTick()
    //    read closed candles [1]/[2], so ticking every tick is wasteful
    //    and would fire duplicate signals within the same bar).
    EvaluateStrategyOnNewBar();
+
+   // 4) BRIDGE LAYER: draw any levels pushed by the Python bridge.
+   ReadPythonLevels();
+}
+
+//+------------------------------------------------------------------+
+//| Read the Python-bridge levels CSV (MQL5/Files) and draw each     |
+//| price as a dashed line. Throttled to InpLevelsRefresh seconds.   |
+//| File format per line:  <price>,<label>                           |
+//+------------------------------------------------------------------+
+void ReadPythonLevels()
+{
+   if(!InpReadPyLevels)
+      return;
+   if(TimeCurrent() - g_lastLevelsRead < InpLevelsRefresh)
+      return;
+   g_lastLevelsRead = TimeCurrent();
+
+   // Clear previously drawn Python lines so removed levels disappear.
+   ObjectsDeleteAll(0, OBJ_PREFIX "PY_");
+
+   int fh = FileOpen(InpLevelsFile, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+      return; // file not present yet -> nothing to draw
+
+   int idx = 0;
+   while(!FileIsEnding(fh))
+   {
+      string line = FileReadString(fh);
+      if(StringLen(line) == 0)
+         continue;
+
+      string parts[];
+      int n = StringSplit(line, ',', parts);
+      if(n < 1)
+         continue;
+
+      double price = StringToDouble(parts[0]);
+      if(price <= 0)
+         continue;
+
+      string label = (n >= 2) ? parts[1] : ("PY_" + IntegerToString(idx));
+      string name  = OBJ_PREFIX "PY_" + IntegerToString(idx);
+
+      if(ObjectFind(0, name) < 0)
+         ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+      ObjectSetDouble (0, name, OBJPROP_PRICE, price);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, InpPyLineColor);
+      ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DASHDOT);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, name, OBJPROP_BACK,  true);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      ObjectSetString (0, name, OBJPROP_TOOLTIP, "Python level: " + label);
+      idx++;
+   }
+   FileClose(fh);
 }
 
 //+------------------------------------------------------------------+

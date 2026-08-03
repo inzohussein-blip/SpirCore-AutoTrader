@@ -10,7 +10,7 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 | المرحلة | الطبقة | الحالة |
 |---------|--------|--------|
 | **Phase 1** | النواة المحلية MQL5 (EA) — التنفيذ + الرسم + الأزرار | ✅ منجزة |
-| **Phase 2** | جسر Python المحلي (FastAPI + MetaTrader5) | ⏳ قادمة |
+| **Phase 2** | جسر Python المحلي (FastAPI + MetaTrader5) | ✅ منجزة |
 | **Phase 3** | إضافة كروم (اعتراض تنبيهات TradingView عبر WebSocket) | ⏳ قادمة |
 
 ---
@@ -59,6 +59,53 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 
 ---
 
+---
+
+## Phase 2 — Python Bridge (`bridge/`)
+
+جسر محلي يعمل بالخلفية على جهازك، يربط المتصفح/TradingView بمنصة MT5 مباشرة عبر مكتبة `MetaTrader5` الرسمية. **يعمل محلياً 100%** (افتراضياً على `127.0.0.1` فقط) — لا سيرفرات خارجية.
+
+### الملفات
+| الملف | الوظيفة |
+|-------|---------|
+| `config.py` | تحميل الإعدادات من متغيرات البيئة (`.env`) |
+| `models.py` | مخططات الإشارات الواردة (Pydantic) |
+| `mt5_client.py` | الاتصال بـ MT5 + تنفيذ ECN + فلتر السبريد (نفس منطق الـ EA) |
+| `levels.py` | كتابة المستويات إلى ملف يقرأه الـ EA ليرسمها |
+| `server.py` | خادم FastAPI: Webhook + WebSocket + حالة |
+| `requirements.txt` / `.env.example` | التبعيات والإعدادات |
+
+### نقاط الاتصال (Endpoints)
+- `GET  /health` — فحص الحياة.
+- `GET  /status` — حالة المنصة والحساب والسبريد الحالي.
+- `POST /webhook` — استقبال تنبيه من TradingView/المتصفح (JSON).
+- `WS   /ws` — قناة WebSocket سريعة لإضافة كروم (المرحلة 3).
+
+### شكل الإشارة (JSON)
+```json
+{ "secret": "<BRIDGE_AUTH_TOKEN>", "action": "buy", "symbol": "XAUUSD",
+  "lot": 0.10, "sl": 3340.0, "tp": 3380.0 }
+```
+- `action`: `buy` / `sell` (فتح ECN) — `close` (إغلاق صفقات الجسر) — `draw` (إرسال مستويات: `"levels": [3358.4, 3341.1]`).
+- كل إشارة يجب أن تحمل `secret` مطابقاً لـ `BRIDGE_AUTH_TOKEN`.
+
+### التنفيذ والأمان
+- **ECN صارم**: أمر سوق بدون SL/TP ثم `TRADE_ACTION_SLTP` فوري (نفس انضباط الـ EA).
+- **فلتر السبريد** + **حد الصفقات** + fallback لنقاط SL/TP الثابتة إن لم تُرسل أسعار.
+- الرسم على الشارت: بايثون لا يستطيع الرسم مباشرة، لذا يكتب المستويات إلى ملف CSV داخل `MQL5/Files/`، والـ EA يقرأه كل ثانيتين ويرسمه كخطوط زرقاء متقطعة (`InpReadPyLevels`).
+
+### التشغيل
+```bash
+cd bridge
+python -m venv .venv && source .venv/bin/activate   # على ويندوز: .venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env        # ثم عدّل القيم (خصوصاً BRIDGE_AUTH_TOKEN)
+python server.py              # أو: uvicorn server:app --host 127.0.0.1 --port 8000
+```
+> يجب أن تكون منصة MT5 مفتوحة ومسجّلة الدخول على نفس الجهاز، ومع تفعيل **Algo Trading**.
+> اجعل `LEVELS_FILE` في `.env` يشير إلى مجلد `MQL5/Files` الخاص بمنصتك حتى يرى الـ EA المستويات.
+
+---
+
 ## الخطوات القادمة / Next Steps
-- **Phase 2**: كتابة جسر Python المحلي (استقبال إشارات + رسم مستويات على MT5).
-- **Phase 3**: بناء إضافة كروم لاعتراض تنبيهات TradingView وإرسالها عبر WebSocket.
+- **Phase 3**: بناء إضافة كروم لاعتراض تنبيهات TradingView وإرسالها عبر WebSocket (`/ws`) إلى جسر Python.

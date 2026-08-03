@@ -1,0 +1,13 @@
+# Python bridge
+bridge/.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime data
+*.csv
+*.log
+
+# MetaTrader compiled output
+*.ex5
