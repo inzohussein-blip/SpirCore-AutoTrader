@@ -1,0 +1,84 @@
+:root {
+  --gold: #d4af37;
+  --bg: #14161c;
+  --panel: #1c1f27;
+  --text: #e8e8ea;
+  --muted: #8a8f9c;
+  --green: #2e8b57;
+  --red: #b22222;
+  --slate: #465063;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 280px;
+  margin: 0;
+  padding: 12px;
+  font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.logo { font-weight: 700; color: var(--gold); letter-spacing: 0.5px; }
+
+.status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+.status.on  { background: var(--green); color: #fff; }
+.status.off { background: var(--red);   color: #fff; }
+
+section { background: var(--panel); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+
+label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+
+input {
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  background: #0f1116;
+  border: 1px solid #2a2e38;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+
+.btn {
+  width: 100%;
+  padding: 9px;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:active { transform: translateY(1px); }
+.btn.buy { background: var(--green); }
+.btn.sell { background: var(--red); }
+.btn.neutral { background: var(--slate); margin-top: 8px; }
+.btn.secondary { background: var(--gold); color: #14161c; }
+
+.actions .row { margin-bottom: 0; }
+
+.log {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 16px;
+  margin: 4px 2px 0;
+  word-break: break-word;
+}

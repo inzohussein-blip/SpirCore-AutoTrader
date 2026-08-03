@@ -1,0 +1,159 @@
+# SpirCore-AutoTrader
+
+نظام تداول هجين عابر للمنصات مخصص للذهب (XAUUSD) على منصة MetaTrader 5.
+A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
+
+> 🚀 للتشغيل السريع خطوة بخطوة، راجع **[QUICKSTART.md](QUICKSTART.md)**.
+
+## البنية العامة / Architecture
+
+النظام مقسوم إلى ثلاث طبقات مستقلة ومترابطة:
+
+| المرحلة | الطبقة | الحالة |
+|---------|--------|--------|
+| **Phase 1** | النواة المحلية MQL5 (EA) — التنفيذ + الرسم + الأزرار | ✅ منجزة |
+| **Phase 2** | جسر Python المحلي (FastAPI + MetaTrader5) | ✅ منجزة |
+| **Phase 3** | إضافة كروم (اعتراض تنبيهات TradingView عبر WebSocket) | ✅ منجزة |
+
+---
+
+## Phase 1 — MQL5 Core
+
+الملفات:
+- `MT5/Experts/SpirCore_EA.mq5` — النواة (تنفيذ + رسم + أزرار).
+- `MT5/Experts/SpirCore_Strategies.mqh` — محرك الاستراتيجيات (التحليل/الإشارات).
+
+> ضع **كلا الملفين** معاً داخل `MQL5/Experts/` (الـ include يجب أن يكون بجانب الـ EA).
+
+### الميزات المنجزة
+1. **تنفيذ متوافق مع ECN/STP**: يفتح الصفقة بسعر السوق **بدون** SL/TP، ثم يلحق الأهداف فوراً عبر `PositionModify` (مع إعادة محاولة) لتجنب رفض بروكرز الـ ECN.
+2. **فلتر السبريد**: يمنع الدخول إذا تجاوز السبريد الحالي الحد المسموح (حماية وقت الأخبار / الماركت ميكر).
+3. **خطوط مستقبلية مرئية**: خطان أفقيان ذهبيان متقطعان أعلى/أسفل السعر (افتراضياً 150 نقطة) مع تنبيه صوتي ومرئي عند اللمس.
+4. **لوحة أزرار GUI**: زر `AUTO: ON/OFF` + أزرار `BUY` / `SELL` / `CLOSE ALL` + شريط حالة حي (الرمز، السبريد، حالة الأتمتة). تبقى الخطوط تعمل دائماً حتى لو كانت الأتمتة مطفأة.
+5. **محرك استراتيجيات للذهب** (مقتبس ومطوّر من [`geraked/metatrader5`](https://github.com/geraked/metatrader5)):
+   - **CEZLSMA** (اتجاهية): Chandelier Exit + ZLSMA على إغلاق Heikin-Ashi. شراء عندما يكون اتجاه الـ CE صاعداً وإغلاق HA فوق الـ ZLSMA، والعكس للبيع. وقف الخسارة ديناميكي من خط الـ Chandelier.
+   - **BBRSI** (ارتدادية): Bollinger Bands + RSI. دخول عند الارتداد من التشبع (RSI + كسر الباند ثم العودة). وقف الخسارة خلف الباند.
+   - **LRCUTB** (زخم/Momentum): Linear Regression Candles + UT Bot. شراء عندما تكون شمعة الانحدار صاعدة وفوق خط الإشارة **مع** إشارة UT Bot صاعدة خلال آخر 3 شموع، والعكس للبيع. وقف الخسارة من آخر قاع/قمة (Swing).
+   - الإشارات تُحسب **على إغلاق الشمعة فقط** (لا تكرار داخل نفس الشمعة)، وتظهر على شريط اللوحة. إذا كانت الأتمتة `ON` تُنفَّذ تلقائياً بأسلوب ECN مع احترام فلتر السبريد وحد الصفقات المفتوحة (`InpMaxPositions`). إذا كانت `OFF` تبقى الإشارة استشارية فقط لتأكيدها يدوياً.
+   - `InpUseStratSLTP` يتحكم في استخدام SL/TP الديناميكي للاستراتيجية أو الرجوع للنقاط الثابتة. الـ TP يُشتق من مسافة المخاطرة عبر `InpTPCoef`.
+
+### الاستراتيجيات المتاحة (من المستودع، يمكن إضافة المزيد لاحقاً)
+المنفّذة حالياً: **CEZLSMA**, **BBRSI**, **LRCUTB**. المستودع الأصلي يضم أيضاً: 3MAF, DHLAOS, 3MACD, 2MACDSTO, 2MAAOS, AFAOSMD, NWERSIASF, COT1 — قابلة للإضافة لنفس المحرك عند الطلب.
+
+### الإعدادات الافتراضية (قابلة للتعديل من نافذة الـ EA)
+- الرمز: `XAUUSD`
+- اللوت: ثابت `0.10`
+- Stop Loss: `300` نقطة | Take Profit: `600` نقطة
+- أقصى سبريد: `30` نقطة
+- مسافة الخطوط: `150` نقطة
+- الأتمتة عند البدء: **OFF** (للأمان)
+
+### طريقة التركيب في MetaEditor
+1. افتح منصة **MT5** → من القائمة العلوية اضغط **Tools → MetaQuotes Language Editor** (أو زر `F4`).
+2. في نافذة **Navigator** على اليسار، انقر بزر الفأرة الأيمن على مجلد **Experts** → **Open Folder**.
+3. انسخ **الملفين** `SpirCore_EA.mq5` و `SpirCore_Strategies.mqh` داخل هذا المجلد (`MQL5/Experts/`).
+4. ارجع إلى MetaEditor، افتح الملف، ثم اضغط **Compile** (`F7`). يجب أن يظهر **0 errors, 0 warnings**.
+5. ارجع إلى منصة MT5، افتح شارت **XAUUSD**.
+6. من **Navigator → Expert Advisors** اسحب `SpirCore_EA` إلى الشارت.
+7. في نافذة الإعدادات فعّل **Allow Algo Trading**، وتأكد أن زر **Algo Trading** في الشريط العلوي مُفعّل (أخضر).
+8. ستظهر لوحة الأزرار في الزاوية العلوية اليمنى، والخطان الذهبيان على الشارت.
+
+> ملاحظة: إذا كان اسم رمز الذهب لدى بروكرك مختلفاً (مثل `GOLD` أو `XAUUSD.m`)، غيّر قيمة الإدخال **InpSymbol** لتطابقه تماماً.
+
+---
+
+---
+
+## Phase 2 — Python Bridge (`bridge/`)
+
+جسر محلي يعمل بالخلفية على جهازك، يربط المتصفح/TradingView بمنصة MT5 مباشرة عبر مكتبة `MetaTrader5` الرسمية. **يعمل محلياً 100%** (افتراضياً على `127.0.0.1` فقط) — لا سيرفرات خارجية.
+
+### الملفات
+| الملف | الوظيفة |
+|-------|---------|
+| `config.py` | تحميل الإعدادات من متغيرات البيئة (`.env`) |
+| `models.py` | مخططات الإشارات الواردة (Pydantic) |
+| `mt5_client.py` | الاتصال بـ MT5 + تنفيذ ECN + فلتر السبريد (نفس منطق الـ EA) |
+| `levels.py` | كتابة المستويات إلى ملف يقرأه الـ EA ليرسمها |
+| `server.py` | خادم FastAPI: Webhook + WebSocket + حالة |
+| `requirements.txt` / `.env.example` | التبعيات والإعدادات |
+
+### نقاط الاتصال (Endpoints)
+- `GET  /health` — فحص الحياة.
+- `GET  /status` — حالة المنصة والحساب والسبريد الحالي.
+- `POST /webhook` — استقبال تنبيه من TradingView/المتصفح (JSON).
+- `WS   /ws` — قناة WebSocket سريعة لإضافة كروم (المرحلة 3).
+
+### شكل الإشارة (JSON)
+```json
+{ "secret": "<BRIDGE_AUTH_TOKEN>", "action": "buy", "symbol": "XAUUSD",
+  "lot": 0.10, "sl": 3340.0, "tp": 3380.0 }
+```
+- `action`: `buy` / `sell` (فتح ECN) — `close` (إغلاق صفقات الجسر) — `draw` (إرسال مستويات: `"levels": [3358.4, 3341.1]`).
+- كل إشارة يجب أن تحمل `secret` مطابقاً لـ `BRIDGE_AUTH_TOKEN`.
+
+### التنفيذ والأمان
+- **ECN صارم**: أمر سوق بدون SL/TP ثم `TRADE_ACTION_SLTP` فوري (نفس انضباط الـ EA).
+- **فلتر السبريد** + **حد الصفقات** + fallback لنقاط SL/TP الثابتة إن لم تُرسل أسعار.
+- الرسم على الشارت: بايثون لا يستطيع الرسم مباشرة، لذا يكتب المستويات إلى ملف CSV داخل `MQL5/Files/`، والـ EA يقرأه كل ثانيتين ويرسمه كخطوط زرقاء متقطعة (`InpReadPyLevels`).
+
+### التشغيل
+```bash
+cd bridge
+python -m venv .venv && source .venv/bin/activate   # على ويندوز: .venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env        # ثم عدّل القيم (خصوصاً BRIDGE_AUTH_TOKEN)
+python server.py              # أو: uvicorn server:app --host 127.0.0.1 --port 8000
+```
+> يجب أن تكون منصة MT5 مفتوحة ومسجّلة الدخول على نفس الجهاز، ومع تفعيل **Algo Trading**.
+> اجعل `LEVELS_FILE` في `.env` يشير إلى مجلد `MQL5/Files` الخاص بمنصتك حتى يرى الـ EA المستويات.
+
+---
+
+---
+
+## Phase 3 — Chrome Extension (`extension/`)
+
+إضافة كروم (Manifest V3) تعترض تنبيهات TradingView وتنقلها فوراً عبر **WebSocket** إلى جسر Python المحلي (`/ws`).
+
+### الملفات
+| الملف | الوظيفة |
+|-------|---------|
+| `manifest.json` | تعريف الإضافة (MV3) وصلاحياتها على TradingView |
+| `background.js` | Service Worker: يدير اتصال WebSocket الدائم + إعادة اتصال تلقائية + keep-alive |
+| `content.js` | يراقب سجل تنبيهات TradingView ويحوّل نصها إلى إشارات |
+| `popup.html/.css/.js` | واجهة إعدادات + أزرار يدوية (BUY/SELL/CLOSE) + مؤشر حالة الاتصال |
+
+### قواعد نص التنبيه في TradingView
+اجعل نص التنبيه يبدأ بالكلمة `SPIRCORE` ثم الأمر:
+```
+SPIRCORE BUY
+SPIRCORE SELL XAUUSD 0.20
+SPIRCORE CLOSE
+SPIRCORE DRAW 3358.4 3341.1
+```
+> يمكنك أيضاً الاختبار من كونسول الصفحة: `window.__spircore("SPIRCORE BUY XAUUSD 0.10")`.
+
+### التركيب
+1. افتح كروم → `chrome://extensions` → فعّل **Developer mode**.
+2. اضغط **Load unpacked** → اختر مجلد `extension/`.
+3. افتح الإضافة من شريط الأدوات، وأدخل: **host** (127.0.0.1)، **port** (8000)، **Auth token** (نفس `BRIDGE_AUTH_TOKEN`)، **Symbol/Lot** ثم **Save & Connect**.
+4. عندما يعمل جسر Python سترى المؤشر **online** أخضر.
+
+---
+
+## 🔄 التدفق الكامل للنظام / End-to-End Flow
+```
+TradingView Alert ──► Chrome Extension (content.js)
+        │                     │ WebSocket
+        │                     ▼
+        │             Python Bridge (FastAPI /ws)
+        │                     │ MetaTrader5 lib
+        │                     ▼
+        │             MT5 Terminal ◄── SpirCore_EA (ECN exec + GUI + strategies)
+        │                     ▲ CSV levels
+        └── (or draw levels) ──┘
+```
+
+## ⚠️ إخلاء مسؤولية / Disclaimer
+هذا النظام لأغراض تعليمية وبحثية. التداول الآلي على الذهب عالي المخاطر. **اختبر دائماً على حساب تجريبي (Demo)** وراجع الكود قبل أي استخدام حقيقي.
