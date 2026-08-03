@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  python:
+    name: Python (bridge)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # NOTE: MetaTrader5 is Windows-only, so we do NOT install requirements.
+      # py_compile validates syntax without importing; the analyzer and
+      # backtester are stdlib-only and run as real smoke tests.
+      - name: Byte-compile all bridge modules
+        run: python -m py_compile bridge/*.py
+      - name: Analyzer smoke test
+        run: python bridge/analyze.py bridge/tests/sample_journal.csv
+      - name: Backtester smoke test (all 5 strategies)
+        run: python bridge/backtest.py bridge/tests/sample_bars.csv
+
+  javascript:
+    name: Extension (JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax-check extension scripts
+        run: |
+          for f in extension/*.js; do
+            echo "checking $f"
+            node --check "$f"
+          done
+      - name: Validate manifest.json
+        run: python3 -c "import json; json.load(open('extension/manifest.json'))"
