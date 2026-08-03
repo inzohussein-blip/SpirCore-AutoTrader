@@ -22,6 +22,7 @@
 
 #include <Trade\Trade.mqh>
 #include <Trade\SymbolInfo.mqh>
+#include "SpirCore_Strategies.mqh"
 
 //====================================================================
 //  INPUTS / الإعدادات
@@ -50,6 +51,25 @@ input bool      InpAlertOnTouch  = true;       // Sound + popup alert when price
 input group    "=== Execution / التنفيذ ==="
 input int      InpSlippagePts   = 20;         // Max deviation/slippage in points
 input int      InpModifyRetries = 3;          // Retries for the ECN PositionModify step
+input int      InpMaxPositions  = 1;          // Max simultaneous EA positions on the symbol
+
+input group    "=== Strategy Engine / محرك الاستراتيجيات ==="
+input ENUM_STRATEGY InpStrategy      = STRAT_CEZLSMA; // Auto strategy (None = manual only)
+input bool     InpUseStratSLTP  = true;       // Use strategy's dynamic SL/TP (else fixed points)
+
+input group    "--- CEZLSMA (trend) ---"
+input int      InpCE_AtrPeriod  = 1;          // Chandelier ATR period
+input double   InpCE_Mult       = 0.75;       // Chandelier ATR multiplier
+input int      InpZL_Period     = 50;         // ZLSMA period
+
+input group    "--- BBRSI (mean reversion) ---"
+input int      InpBB_Period     = 500;        // Bollinger period
+input double   InpBB_Dev        = 2.0;        // Bollinger deviations
+input int      InpRSI_Period    = 7;          // RSI period
+
+input group    "--- Strategy risk shaping ---"
+input double   InpTPCoef        = 1.5;        // TP = TPCoef x risk distance
+input int      InpStratSLDevPts = 50;         // Extra SL buffer beyond raw stop (points)
 
 //====================================================================
 //  GLOBALS / متغيرات عامة
@@ -63,6 +83,7 @@ double         g_lowerLine     = 0.0;     // current lower future-entry level
 datetime       g_lastLineCalc  = 0;       // last time lines were (re)computed
 bool           g_touchedUpper  = false;   // debounce flags so alert fires once per touch
 bool           g_touchedLower  = false;
+datetime       g_lastSignalBar = 0;       // last bar we evaluated the strategy on
 
 // --- Object names (kept in one place for clean create/delete) -------
 #define OBJ_PREFIX     "SPIRCORE_"
@@ -97,6 +118,16 @@ int OnInit()
 
    g_autoOn = InpAutoStartOn;
 
+   // --- Configure + initialize the strategy (analysis) engine ------
+   StratConfigure(InpCE_AtrPeriod, InpCE_Mult, InpZL_Period,
+                  InpBB_Period, InpBB_Dev, InpRSI_Period,
+                  InpTPCoef, InpStratSLDevPts);
+   if(InpStrategy != STRAT_NONE && !StratInit(InpSymbol, (ENUM_TIMEFRAMES)Period()))
+   {
+      Print("ERROR: strategy engine failed to initialize.");
+      return(INIT_FAILED);
+   }
+
    // --- Build UI + first line levels -------------------------------
    CreatePanel();
    RecalcFutureLines(true);
@@ -112,6 +143,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   StratDeinit();
    ObjectsDeleteAll(0, OBJ_PREFIX);
    ChartRedraw();
    Print("SpirCore_EA removed. reason=", reason);
@@ -132,11 +164,80 @@ void OnTick()
    // 2) STATUS: keep the on-screen spread/state readout live
    RefreshStatusLabel();
 
-   // NOTE:
-   // In Phase 1 there is deliberately NO automatic signal generator.
-   // Auto-execution here is driven by the manual/confirm buttons and,
-   // later, by signals arriving from the Python bridge (Phase 2).
-   // The g_autoOn gate below is the single switch that will arm that path.
+   // 3) STRATEGY LAYER: evaluate ONCE per newly closed bar (strategies
+   //    read closed candles [1]/[2], so ticking every tick is wasteful
+   //    and would fire duplicate signals within the same bar).
+   EvaluateStrategyOnNewBar();
+}
+
+//+------------------------------------------------------------------+
+//| Run the selected strategy on bar close and, if Auto is ON,       |
+//| execute the resulting signal (ECN style, spread-filtered).       |
+//+------------------------------------------------------------------+
+void EvaluateStrategyOnNewBar()
+{
+   if(InpStrategy == STRAT_NONE)
+      return;
+
+   datetime barTime = iTime(InpSymbol, PERIOD_CURRENT, 0);
+   if(barTime == g_lastSignalBar)
+      return;                 // still the same bar -> nothing new to decide
+   g_lastSignalBar = barTime; // mark this bar handled (once)
+
+   SignalResult r = GetStrategySignal(InpStrategy);
+   if(r.sig == SIG_NONE)
+      return;
+
+   // Show the signal on the banner regardless of auto state, so the
+   // trader can confirm manually when Auto is OFF.
+   string dir = (r.sig == SIG_BUY) ? "BUY" : "SELL";
+   ShowTouchBanner(StringFormat("SIGNAL: %s (%s)  -> %s",
+                    dir, StrategyName(InpStrategy),
+                    (g_autoOn ? "auto-executing" : "click BUY/SELL to confirm")));
+
+   if(!g_autoOn)
+      return;                 // Auto OFF: signal is advisory only
+
+   if(CountOwnPositions() >= InpMaxPositions)
+      return;                 // respect the position cap
+
+   // Fill TP from the strategy's SL using the intended entry price.
+   double entry = (r.sig == SIG_BUY) ? g_sym.Ask() : g_sym.Bid();
+   BuildTP(r, entry);
+
+   ENUM_ORDER_TYPE ot = (r.sig == SIG_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   double useSL = InpUseStratSLTP ? r.sl : 0.0;
+   double useTP = InpUseStratSLTP ? r.tp : 0.0;
+   OpenTradeECN(ot, "auto-" + StrategyName(InpStrategy), useSL, useTP);
+}
+
+//+------------------------------------------------------------------+
+//| Human-readable strategy name for logs / banner.                  |
+//+------------------------------------------------------------------+
+string StrategyName(const ENUM_STRATEGY s)
+{
+   switch(s)
+   {
+      case STRAT_CEZLSMA: return("CEZLSMA");
+      case STRAT_BBRSI:   return("BBRSI");
+      default:            return("NONE");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Count positions opened by THIS EA on the traded symbol.          |
+//+------------------------------------------------------------------+
+int CountOwnPositions()
+{
+   int n = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(PositionGetTicket(i) == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL)  != InpSymbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC)  != InpMagic)  continue;
+      n++;
+   }
+   return(n);
 }
 
 //+------------------------------------------------------------------+
@@ -200,7 +301,8 @@ bool SpreadOK()
 //|   Step 1: market order with NO SL/TP (avoids ECN rejection).     |
 //|   Step 2: immediate PositionModify to attach SL/TP brackets.     |
 //+------------------------------------------------------------------+
-bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag)
+bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag,
+                  const double slPrice = 0.0, const double tpPrice = 0.0)
 {
    // Spread filter guards the automatic path; manual clicks also respect it.
    if(!SpreadOK())
@@ -232,8 +334,11 @@ bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag)
    PrintFormat("OPEN OK [%s]: lot=%.2f price=%.3f deal=%I64u", tag, lot, g_trade.ResultPrice(), deal);
 
    // ----- STEP 2: attach SL/TP via PositionModify (ECN follow-up) ----
-   if(InpStopLossPts > 0 || InpTakeProfitPts > 0)
-      AttachBrackets(type);
+   //   If explicit prices were supplied (strategy-driven) use them;
+   //   otherwise fall back to the fixed-points config.
+   bool wantBrackets = (slPrice > 0 || tpPrice > 0 || InpStopLossPts > 0 || InpTakeProfitPts > 0);
+   if(wantBrackets)
+      AttachBrackets(type, slPrice, tpPrice);
 
    return(true);
 }
@@ -243,7 +348,8 @@ bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag)
 //| Computed from the ACTUAL fill price, retried a few times so a    |
 //| momentary "market changed" does not leave a naked position.      |
 //+------------------------------------------------------------------+
-void AttachBrackets(const ENUM_ORDER_TYPE type)
+void AttachBrackets(const ENUM_ORDER_TYPE type,
+                    const double slPrice = 0.0, const double tpPrice = 0.0)
 {
    if(!PositionSelect(InpSymbol))
    {
@@ -254,16 +360,18 @@ void AttachBrackets(const ENUM_ORDER_TYPE type)
    double pt      = g_sym.Point();
    double openPx  = PositionGetDouble(POSITION_PRICE_OPEN);
 
-   double sl = 0.0, tp = 0.0;
-   if(type == ORDER_TYPE_BUY)
+   // Prefer explicit (strategy-supplied) prices; else derive from points.
+   double sl = slPrice;
+   double tp = tpPrice;
+   if(sl <= 0.0)
    {
-      if(InpStopLossPts   > 0) sl = openPx - InpStopLossPts   * pt;
-      if(InpTakeProfitPts > 0) tp = openPx + InpTakeProfitPts * pt;
+      if(type == ORDER_TYPE_BUY && InpStopLossPts > 0) sl = openPx - InpStopLossPts * pt;
+      if(type == ORDER_TYPE_SELL && InpStopLossPts > 0) sl = openPx + InpStopLossPts * pt;
    }
-   else
+   if(tp <= 0.0)
    {
-      if(InpStopLossPts   > 0) sl = openPx + InpStopLossPts   * pt;
-      if(InpTakeProfitPts > 0) tp = openPx - InpTakeProfitPts * pt;
+      if(type == ORDER_TYPE_BUY && InpTakeProfitPts > 0) tp = openPx + InpTakeProfitPts * pt;
+      if(type == ORDER_TYPE_SELL && InpTakeProfitPts > 0) tp = openPx - InpTakeProfitPts * pt;
    }
 
    // Respect broker's minimum stop distance (stops-level).

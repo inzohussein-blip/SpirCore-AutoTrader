@@ -15,13 +15,27 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 
 ---
 
-## Phase 1 — MQL5 Core (`MT5/Experts/SpirCore_EA.mq5`)
+## Phase 1 — MQL5 Core
+
+الملفات:
+- `MT5/Experts/SpirCore_EA.mq5` — النواة (تنفيذ + رسم + أزرار).
+- `MT5/Experts/SpirCore_Strategies.mqh` — محرك الاستراتيجيات (التحليل/الإشارات).
+
+> ضع **كلا الملفين** معاً داخل `MQL5/Experts/` (الـ include يجب أن يكون بجانب الـ EA).
 
 ### الميزات المنجزة
 1. **تنفيذ متوافق مع ECN/STP**: يفتح الصفقة بسعر السوق **بدون** SL/TP، ثم يلحق الأهداف فوراً عبر `PositionModify` (مع إعادة محاولة) لتجنب رفض بروكرز الـ ECN.
 2. **فلتر السبريد**: يمنع الدخول إذا تجاوز السبريد الحالي الحد المسموح (حماية وقت الأخبار / الماركت ميكر).
 3. **خطوط مستقبلية مرئية**: خطان أفقيان ذهبيان متقطعان أعلى/أسفل السعر (افتراضياً 150 نقطة) مع تنبيه صوتي ومرئي عند اللمس.
 4. **لوحة أزرار GUI**: زر `AUTO: ON/OFF` + أزرار `BUY` / `SELL` / `CLOSE ALL` + شريط حالة حي (الرمز، السبريد، حالة الأتمتة). تبقى الخطوط تعمل دائماً حتى لو كانت الأتمتة مطفأة.
+5. **محرك استراتيجيات للذهب** (مقتبس ومطوّر من [`geraked/metatrader5`](https://github.com/geraked/metatrader5)):
+   - **CEZLSMA** (اتجاهية): Chandelier Exit + ZLSMA على إغلاق Heikin-Ashi. شراء عندما يكون اتجاه الـ CE صاعداً وإغلاق HA فوق الـ ZLSMA، والعكس للبيع. وقف الخسارة ديناميكي من خط الـ Chandelier.
+   - **BBRSI** (ارتدادية): Bollinger Bands + RSI. دخول عند الارتداد من التشبع (RSI + كسر الباند ثم العودة). وقف الخسارة خلف الباند.
+   - الإشارات تُحسب **على إغلاق الشمعة فقط** (لا تكرار داخل نفس الشمعة)، وتظهر على شريط اللوحة. إذا كانت الأتمتة `ON` تُنفَّذ تلقائياً بأسلوب ECN مع احترام فلتر السبريد وحد الصفقات المفتوحة (`InpMaxPositions`). إذا كانت `OFF` تبقى الإشارة استشارية فقط لتأكيدها يدوياً.
+   - `InpUseStratSLTP` يتحكم في استخدام SL/TP الديناميكي للاستراتيجية أو الرجوع للنقاط الثابتة. الـ TP يُشتق من مسافة المخاطرة عبر `InpTPCoef`.
+
+### الاستراتيجيات المتاحة (من المستودع، يمكن إضافة المزيد لاحقاً)
+المنفّذة حالياً: **CEZLSMA**, **BBRSI**. المستودع الأصلي يضم أيضاً: 3MAF, DHLAOS, 3MACD, 2MACDSTO, 2MAAOS, AFAOSMD, NWERSIASF, LRCUTB, COT1 — قابلة للإضافة لنفس المحرك عند الطلب.
 
 ### الإعدادات الافتراضية (قابلة للتعديل من نافذة الـ EA)
 - الرمز: `XAUUSD`
@@ -34,7 +48,7 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 ### طريقة التركيب في MetaEditor
 1. افتح منصة **MT5** → من القائمة العلوية اضغط **Tools → MetaQuotes Language Editor** (أو زر `F4`).
 2. في نافذة **Navigator** على اليسار، انقر بزر الفأرة الأيمن على مجلد **Experts** → **Open Folder**.
-3. انسخ ملف `SpirCore_EA.mq5` داخل هذا المجلد (`MQL5/Experts/`).
+3. انسخ **الملفين** `SpirCore_EA.mq5` و `SpirCore_Strategies.mqh` داخل هذا المجلد (`MQL5/Experts/`).
 4. ارجع إلى MetaEditor، افتح الملف، ثم اضغط **Compile** (`F7`). يجب أن يظهر **0 errors, 0 warnings**.
 5. ارجع إلى منصة MT5، افتح شارت **XAUUSD**.
 6. من **Navigator → Expert Advisors** اسحب `SpirCore_EA` إلى الشارت.
