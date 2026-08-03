@@ -91,6 +91,19 @@ input group    "--- Strategy risk shaping ---"
 input double   InpTPCoef        = 1.5;        // TP = TPCoef x risk distance
 input int      InpStratSLDevPts = 50;         // Extra SL buffer beyond raw stop (points)
 
+input group    "=== Position Management / إدارة الصفقات ==="
+input bool     InpUseBreakEven  = true;       // Move SL to break-even once in profit
+input int      InpBETriggerPts  = 300;        // Profit (points) that triggers break-even
+input int      InpBELockPts     = 20;         // Points locked beyond entry at break-even
+input bool     InpUseTrailing   = true;       // Enable trailing stop
+input int      InpTrailStartPts  = 400;       // Profit (points) to start trailing
+input int      InpTrailDistPts   = 250;       // Trailing distance behind price (points)
+input int      InpTrailStepPts   = 30;        // Minimum step to move the trailing SL (points)
+
+input group    "=== Journal / السجل ==="
+input bool     InpWriteJournal  = true;       // Log closed trades to CSV (MQL5/Files)
+input string   InpJournalFile   = "spircore_journal.csv"; // Journal filename
+
 //====================================================================
 //  GLOBALS / متغيرات عامة
 //====================================================================
@@ -116,6 +129,7 @@ datetime       g_lastLevelsRead = 0;      // last time the Python levels file wa
 #define BTN_CLOSE      OBJ_PREFIX "BTN_CLOSE"
 #define LBL_STATUS     OBJ_PREFIX "LBL_STATUS"
 #define LBL_TOUCH      OBJ_PREFIX "LBL_TOUCH"
+#define LBL_STATS      OBJ_PREFIX "LBL_STATS"
 
 //+------------------------------------------------------------------+
 //| OnInit                                                           |
@@ -195,8 +209,123 @@ void OnTick()
    //    and would fire duplicate signals within the same bar).
    EvaluateStrategyOnNewBar();
 
-   // 4) BRIDGE LAYER: draw any levels pushed by the Python bridge.
+   // 4) MANAGEMENT LAYER: trail / break-even on open positions.
+   ManageOpenPositions();
+
+   // 5) BRIDGE LAYER: draw any levels pushed by the Python bridge.
    ReadPythonLevels();
+}
+
+//+------------------------------------------------------------------+
+//| Break-even + trailing-stop management for this EA's positions.   |
+//| Only ever moves the stop in the favorable direction; keeps TP.   |
+//+------------------------------------------------------------------+
+void ManageOpenPositions()
+{
+   if(!InpUseBreakEven && !InpUseTrailing)
+      return;
+   if(!g_sym.RefreshRates())
+      return;
+
+   double pt   = g_sym.Point();
+   double bid  = g_sym.Bid();
+   double ask  = g_sym.Ask();
+   double step = MathMax(1, InpTrailStepPts) * pt;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic)  continue;
+
+      long   ptype  = PositionGetInteger(POSITION_TYPE);
+      double entry  = PositionGetDouble(POSITION_PRICE_OPEN);
+      double curSL  = PositionGetDouble(POSITION_SL);
+      double curTP  = PositionGetDouble(POSITION_TP);
+      double newSL  = curSL;
+
+      if(ptype == POSITION_TYPE_BUY)
+      {
+         double profitPts = (bid - entry) / pt;
+         if(InpUseBreakEven && profitPts >= InpBETriggerPts)
+            newSL = MathMax(newSL, entry + InpBELockPts * pt);
+         if(InpUseTrailing && profitPts >= InpTrailStartPts)
+            newSL = MathMax(newSL, bid - InpTrailDistPts * pt);
+
+         // Apply only if it improves the stop meaningfully and stays valid.
+         if(newSL > curSL + step - pt && newSL < bid)
+            g_trade.PositionModify(ticket, NormalizePrice(newSL), curTP);
+      }
+      else if(ptype == POSITION_TYPE_SELL)
+      {
+         double profitPts = (entry - ask) / pt;
+         double sl = (curSL == 0.0) ? DBL_MAX : curSL;
+         if(InpUseBreakEven && profitPts >= InpBETriggerPts)
+            sl = MathMin(sl, entry - InpBELockPts * pt);
+         if(InpUseTrailing && profitPts >= InpTrailStartPts)
+            sl = MathMin(sl, ask + InpTrailDistPts * pt);
+
+         if(sl != DBL_MAX && (curSL == 0.0 || sl < curSL - step + pt) && sl > ask)
+            g_trade.PositionModify(ticket, NormalizePrice(sl), curTP);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| OnTradeTransaction - append every CLOSED deal to the journal.    |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(!InpWriteJournal)
+      return;
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+      return;
+
+   ulong deal = trans.deal;
+   if(!HistoryDealSelect(deal))
+      return;
+   if(HistoryDealGetInteger(deal, DEAL_MAGIC)  != InpMagic)  return;
+   if(HistoryDealGetString (deal, DEAL_SYMBOL) != InpSymbol) return;
+   if(HistoryDealGetInteger(deal, DEAL_ENTRY)  != DEAL_ENTRY_OUT) return; // closes only
+
+   WriteJournalRow(deal);
+}
+
+//+------------------------------------------------------------------+
+//| Append one closed-deal row to the journal CSV (with header).     |
+//+------------------------------------------------------------------+
+void WriteJournalRow(const ulong deal)
+{
+   double profit  = HistoryDealGetDouble(deal, DEAL_PROFIT);
+   double swap    = HistoryDealGetDouble(deal, DEAL_SWAP);
+   double comm    = HistoryDealGetDouble(deal, DEAL_COMMISSION);
+   double volume  = HistoryDealGetDouble(deal, DEAL_VOLUME);
+   double price   = HistoryDealGetDouble(deal, DEAL_PRICE);
+   long   dtype   = HistoryDealGetInteger(deal, DEAL_TYPE);
+   datetime dtime = (datetime)HistoryDealGetInteger(deal, DEAL_TIME);
+   string comment = HistoryDealGetString(deal, DEAL_COMMENT);
+   string side    = (dtype == DEAL_TYPE_BUY) ? "buy" : "sell";
+
+   bool isNew = !FileIsExist(InpJournalFile);
+   int fh = FileOpen(InpJournalFile, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+   {
+      Print("Journal: could not open ", InpJournalFile);
+      return;
+   }
+   FileSeek(fh, 0, SEEK_END);
+   if(isNew)
+      FileWriteString(fh, "close_time,symbol,side,volume,price,profit,swap,commission,comment\n");
+
+   string row = StringFormat("%s,%s,%s,%.2f,%.3f,%.2f,%.2f,%.2f,%s\n",
+                             TimeToString(dtime, TIME_DATE | TIME_MINUTES),
+                             InpSymbol, side, volume, price,
+                             profit, swap, comm, comment);
+   FileWriteString(fh, row);
+   FileClose(fh);
 }
 
 //+------------------------------------------------------------------+
@@ -657,8 +786,11 @@ void CreatePanel()
    y += h + gap + 2;
    MakeLabel(LBL_STATUS, x, y, "status...", clrGold, 9);
 
+   // Live performance readout (today)
+   MakeLabel(LBL_STATS, x, y + 16, "stats...", clrSilver, 9);
+
    // Touch banner (hidden until a touch happens)
-   MakeLabel(LBL_TOUCH, x, y + 18, "", clrOrange, 9);
+   MakeLabel(LBL_TOUCH, x, y + 34, "", clrOrange, 9);
 }
 
 //+------------------------------------------------------------------+
@@ -735,6 +867,42 @@ void RefreshStatusLabel()
    // Color the readout red when spread would block entries.
    color c = (spreadPts > InpMaxSpreadPts) ? clrRed : clrGold;
    ObjectSetInteger(0, LBL_STATUS, OBJPROP_COLOR, c);
+
+   RefreshStatsLabel();
+}
+
+//+------------------------------------------------------------------+
+//| Live performance readout for today: P/L, trades, win rate.       |
+//+------------------------------------------------------------------+
+void RefreshStatsLabel()
+{
+   int wins = 0, losses = 0;
+   double netPnl = 0.0;
+   if(HistorySelect(RiskStartOfDay(), TimeCurrent()))
+   {
+      int deals = HistoryDealsTotal();
+      for(int i = 0; i < deals; i++)
+      {
+         ulong ticket = HistoryDealGetTicket(i);
+         if(ticket == 0) continue;
+         if(HistoryDealGetInteger(ticket, DEAL_MAGIC)  != InpMagic)  continue;
+         if(HistoryDealGetString (ticket, DEAL_SYMBOL) != InpSymbol) continue;
+         if(HistoryDealGetInteger(ticket, DEAL_ENTRY)  != DEAL_ENTRY_OUT) continue;
+         double p = HistoryDealGetDouble(ticket, DEAL_PROFIT)
+                  + HistoryDealGetDouble(ticket, DEAL_SWAP)
+                  + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+         netPnl += p;
+         if(p >= 0) wins++; else losses++;
+      }
+   }
+   int total = wins + losses;
+   double winRate = (total > 0) ? (100.0 * wins / total) : 0.0;
+
+   string txt = StringFormat("Today: P/L %.2f | %d trades | win %.0f%%",
+                             netPnl, total, winRate);
+   ObjectSetString(0, LBL_STATS, OBJPROP_TEXT, txt);
+   ObjectSetInteger(0, LBL_STATS, OBJPROP_COLOR,
+                    (netPnl >= 0 ? clrMediumSeaGreen : clrIndianRed));
 }
 
 //+------------------------------------------------------------------+
