@@ -1,0 +1,6 @@
+close_time,symbol,side,volume,price,profit,swap,commission,comment
+2026.08.01 10:00,XAUUSD,buy,0.10,3350,40,0,-1,test
+2026.08.01 11:00,XAUUSD,buy,0.10,3350,-15,0,-1,test
+2026.08.01 12:00,XAUUSD,buy,0.10,3350,63,0,-1,test
+2026.08.01 13:00,XAUUSD,buy,0.10,3350,-25,0,-1,test
+2026.08.01 14:00,XAUUSD,buy,0.10,3350,31,0,-1,test

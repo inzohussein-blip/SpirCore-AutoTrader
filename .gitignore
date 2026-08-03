@@ -8,6 +8,8 @@ venv/
 # Runtime data
 *.csv
 *.log
+# ...but keep committed test fixtures
+!bridge/tests/*.csv
 
 # MetaTrader compiled output
 *.ex5
