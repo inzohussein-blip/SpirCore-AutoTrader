@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SpirCore Dashboard</title>
+<style>
+  :root{
+    --gold:#d4af37; --bg:#0f1116; --panel:#171a21; --panel2:#1c2029;
+    --text:#e8e8ea; --muted:#8a8f9c; --green:#2e8b57; --red:#c0392b;
+    --border:#2a2e38;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--bg);color:var(--text);font-size:14px}
+  header{display:flex;align-items:center;justify-content:space-between;
+    padding:12px 18px;border-bottom:1px solid var(--border);background:var(--panel)}
+  .brand{font-weight:700;color:var(--gold);font-size:18px;letter-spacing:.5px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+  .dot.on{background:var(--green)} .dot.off{background:var(--red)}
+  .wrap{max-width:1100px;margin:0 auto;padding:18px}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px}
+  .card .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  .card .v{font-size:22px;font-weight:700;margin-top:4px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .gold{color:var(--gold)}
+  section{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:16px;margin-top:14px}
+  h2{font-size:14px;margin:0 0 12px;color:var(--gold);text-transform:uppercase;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px}
+  th{color:var(--muted);font-weight:600}
+  input,select{background:#0e1015;border:1px solid var(--border);border-radius:6px;
+    color:var(--text);padding:7px 9px;font-size:13px}
+  button{border:none;border-radius:6px;color:#fff;font-weight:600;cursor:pointer;
+    padding:8px 12px;font-size:13px}
+  button:active{transform:translateY(1px)}
+  .b-green{background:var(--green)} .b-red{background:var(--red)}
+  .b-gold{background:var(--gold);color:#14161c} .b-slate{background:#465063}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .controls-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+  .ctl{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px}
+  .ctl .k{color:var(--muted);font-size:12px;margin-bottom:8px}
+  #log{font-family:ui-monospace,monospace;font-size:12px;max-height:170px;overflow:auto;
+    background:#0e1015;border-radius:8px;padding:10px;color:var(--muted)}
+  #log div{padding:2px 0;border-bottom:1px solid #191c23}
+  .stat-row{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:10px}
+  .stat-row .s .k{color:var(--muted);font-size:11px}
+  .stat-row .s .v{font-size:18px;font-weight:700}
+  svg{width:100%;height:120px;background:#0e1015;border-radius:8px}
+  .tokbar{display:flex;gap:8px;align-items:center}
+  .tokbar input{width:170px}
+  small.warn{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">⚡ SpirCore Dashboard</div>
+  <div class="row">
+    <span><span id="connDot" class="dot off"></span><span id="connTxt">connecting…</span></span>
+    <div class="tokbar">
+      <input id="token" type="password" placeholder="control token" />
+      <button class="b-slate" id="saveTok">Save</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- Top metric cards -->
+  <div class="grid cards">
+    <div class="card"><div class="k">MT5</div><div class="v" id="mt5State">—</div></div>
+    <div class="card"><div class="k">Balance</div><div class="v gold" id="balance">—</div></div>
+    <div class="card"><div class="k">Equity</div><div class="v" id="equity">—</div></div>
+    <div class="card"><div class="k">Today P/L</div><div class="v" id="dailyPnl">—</div></div>
+    <div class="card"><div class="k">Spread</div><div class="v" id="spread">—</div></div>
+    <div class="card"><div class="k">Trades today</div><div class="v" id="tradesToday">—</div></div>
+  </div>
+
+  <!-- Controls -->
+  <section>
+    <h2>Control</h2>
+    <div class="controls-grid">
+      <div class="ctl">
+        <div class="k">Automation (EA)</div>
+        <div class="row">
+          <button class="b-green" onclick="ctl('ea_auto',{value:'ON'})">AUTO ON</button>
+          <button class="b-slate" onclick="ctl('ea_auto',{value:'OFF'})">AUTO OFF</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <div class="k">Strategy (EA)</div>
+        <div class="row">
+          <select id="strat">
+            <option>CEZLSMA</option><option>BBRSI</option><option>LRCUTB</option><option>NONE</option>
+          </select>
+          <button class="b-gold" onclick="ctl('ea_strategy',{value:document.getElementById('strat').value})">Set</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <div class="k">Max daily loss % (EA)</div>
+        <div class="row">
+          <input id="riskDaily" type="number" step="0.5" style="width:90px" placeholder="5.0" />
+          <button class="b-gold" onclick="ctl('ea_risk_daily',{value:document.getElementById('riskDaily').value})">Apply</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <div class="k">Emergency</div>
+        <div class="row">
+          <button class="b-slate" onclick="confirmCtl('close_all',{},'Close ALL positions?')">CLOSE ALL</button>
+          <button class="b-red" onclick="confirmCtl('flatten',{},'FLATTEN: close everything AND stop the EA?')">FLATTEN</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Open positions -->
+  <section>
+    <h2>Open positions</h2>
+    <table>
+      <thead><tr><th>Ticket</th><th>Side</th><th>Vol</th><th>Open</th><th>SL</th><th>TP</th><th>Profit</th><th></th></tr></thead>
+      <tbody id="posBody"><tr><td colspan="8" class="muted">—</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- Performance -->
+  <section>
+    <h2>Performance (from journal)</h2>
+    <div class="stat-row">
+      <div class="s"><div class="k">Trades</div><div class="v" id="stTrades">—</div></div>
+      <div class="s"><div class="k">Win rate</div><div class="v" id="stWin">—</div></div>
+      <div class="s"><div class="k">Profit factor</div><div class="v" id="stPF">—</div></div>
+      <div class="s"><div class="k">Net</div><div class="v" id="stNet">—</div></div>
+      <div class="s"><div class="k">Max drawdown</div><div class="v" id="stDD">—</div></div>
+    </div>
+    <svg id="equity-curve" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+  </section>
+
+  <!-- Event log -->
+  <section>
+    <h2>Event log</h2>
+    <div id="log"></div>
+    <small class="warn">Read-only view is open; control actions require the token above. All local (127.0.0.1).</small>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("spircore_token") || "";
+$("token").value = token;
+$("saveTok").onclick = () => { token = $("token").value; localStorage.setItem("spircore_token", token); logEvent("token saved"); };
+
+function logEvent(msg){
+  const d = document.createElement("div");
+  d.textContent = new Date().toLocaleTimeString() + "  " + msg;
+  const log = $("log"); log.prepend(d);
+  while(log.children.length > 100) log.removeChild(log.lastChild);
+}
+function money(x){ return (x==null)?"—":Number(x).toLocaleString(undefined,{maximumFractionDigits:2}); }
+function cls(x){ return x>=0 ? "pos" : "neg"; }
+
+// ---- Control actions ----
+async function ctl(action, extra){
+  if(!token){ logEvent("set the control token first"); return; }
+  try{
+    const res = await fetch("/control", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({secret:token, action, ...extra})
+    });
+    const j = await res.json();
+    logEvent(action + ": " + (j.detail || JSON.stringify(j)));
+  }catch(e){ logEvent(action + " error: " + e.message); }
+}
+function confirmCtl(action, extra, msg){ if(confirm(msg)) ctl(action, extra); }
+function closeTicket(t){ if(confirm("Close ticket "+t+"?")) ctl("close_ticket",{ticket:t}); }
+
+// ---- Live snapshot via WebSocket ----
+function connect(){
+  const ws = new WebSocket(`ws://${location.host}/dashboard-ws`);
+  ws.onopen = () => { $("connDot").className="dot on"; $("connTxt").textContent="live"; };
+  ws.onclose = () => { $("connDot").className="dot off"; $("connTxt").textContent="reconnecting…"; setTimeout(connect,2000); };
+  ws.onmessage = (ev) => { try{ render(JSON.parse(ev.data)); }catch(_){} };
+}
+
+function render(s){
+  const t = s.terminal||{}, a = s.account||{};
+  $("mt5State").textContent = t.connected ? (t.trade_allowed?"trading":"connected") : "offline";
+  $("mt5State").className = "v " + (t.connected ? "pos":"neg");
+  $("balance").textContent = money(a.balance) + " " + (a.currency||"");
+  $("equity").textContent = money(a.equity);
+  $("dailyPnl").textContent = money(s.daily_pnl);
+  $("dailyPnl").className = "v " + cls(s.daily_pnl||0);
+  $("spread").textContent = s.spread_points + "/" + s.max_spread_points;
+  $("spread").className = "v " + (s.spread_points>s.max_spread_points?"neg":"gold");
+  $("tradesToday").textContent = s.trades_today;
+
+  const body = $("posBody");
+  const ps = s.positions||[];
+  if(!ps.length){ body.innerHTML = '<tr><td colspan="8" class="muted">no open positions</td></tr>'; }
+  else{
+    body.innerHTML = ps.map(p =>
+      `<tr><td>${p.ticket}</td><td>${p.type}</td><td>${p.volume}</td>`+
+      `<td>${money(p.price_open)}</td><td>${money(p.sl)}</td><td>${money(p.tp)}</td>`+
+      `<td class="${cls(p.profit)}">${money(p.profit)}</td>`+
+      `<td><button class="b-red" onclick="closeTicket(${p.ticket})">Close</button></td></tr>`
+    ).join("");
+  }
+}
+
+// ---- Performance from journal ----
+async function loadStats(){
+  try{
+    const res = await fetch("/journal?limit=1000");
+    const rows = (await res.json()).rows || [];
+    computeStats(rows);
+  }catch(e){}
+}
+function computeStats(rows){
+  let wins=0, gp=0, gl=0, net=0, eq=0, peak=0, dd=0;
+  const curve=[];
+  for(const r of rows){
+    const pnl = (parseFloat(r.profit)||0)+(parseFloat(r.swap)||0)+(parseFloat(r.commission)||0);
+    net+=pnl; if(pnl>=0){wins++;gp+=pnl;}else{gl+=pnl;}
+    eq+=pnl; curve.push(eq); peak=Math.max(peak,eq); dd=Math.min(dd,eq-peak);
+  }
+  const n=rows.length;
+  $("stTrades").textContent = n;
+  $("stWin").textContent = n? (100*wins/n).toFixed(1)+"%" : "—";
+  $("stPF").textContent = gl? (gp/Math.abs(gl)).toFixed(2) : (gp>0?"∞":"—");
+  $("stNet").textContent = money(net); $("stNet").className="v "+cls(net);
+  $("stDD").textContent = money(dd); $("stDD").className="v neg";
+  drawCurve(curve);
+}
+function drawCurve(curve){
+  const svg=$("equity-curve"); svg.innerHTML="";
+  if(curve.length<2) return;
+  const min=Math.min(...curve,0), max=Math.max(...curve,0), rng=(max-min)||1;
+  const pts=curve.map((v,i)=>{
+    const x=(i/(curve.length-1))*600;
+    const y=120-((v-min)/rng)*110-5;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const zeroY=120-((0-min)/rng)*110-5;
+  svg.innerHTML =
+    `<line x1="0" y1="${zeroY}" x2="600" y2="${zeroY}" stroke="#2a2e38" stroke-width="1"/>`+
+    `<polyline points="${pts}" fill="none" stroke="${curve[curve.length-1]>=0?'#2e8b57':'#c0392b'}" stroke-width="2"/>`;
+}
+
+connect();
+loadStats();
+setInterval(loadStats, 10000);
+logEvent("dashboard ready");
+</script>
+</body>
+</html>

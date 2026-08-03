@@ -22,15 +22,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import csv
 import json
+import os
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
+import commands as ea_commands
 import mt5_client
 from config import settings
 from levels import write_levels
-from models import Result, Signal
+from models import Control, Result, Signal
+
+DASHBOARD_HTML = os.path.join(os.path.dirname(__file__), "dashboard.html")
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +124,88 @@ def status():
         "max_spread_points": settings.max_spread_pts,
         "open_positions": mt5_client.count_own_positions(),
     }
+
+
+@app.get("/dashboard")
+def dashboard():
+    """Serve the single-page dashboard (also opened by the Chrome extension)."""
+    return FileResponse(DASHBOARD_HTML, media_type="text/html")
+
+
+@app.get("/positions")
+def positions():
+    return {"positions": mt5_client.positions_list()}
+
+
+@app.get("/journal")
+def journal(limit: int = 500):
+    """Return the most recent journal rows the EA has written."""
+    rows = []
+    try:
+        with open(settings.journal_file, newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+    except FileNotFoundError:
+        pass
+    return {"rows": rows[-limit:]}
+
+
+def _snapshot() -> dict:
+    """One live frame for the dashboard."""
+    return {
+        "terminal": mt5_client.terminal_status(),
+        "account": mt5_client.account_snapshot(),
+        "symbol": settings.symbol,
+        "spread_points": mt5_client.spread_points(),
+        "max_spread_points": settings.max_spread_pts,
+        "positions": mt5_client.positions_list(),
+        "daily_pnl": mt5_client.daily_pnl(),
+        "trades_today": mt5_client.trades_today(),
+    }
+
+
+@app.get("/snapshot")
+def snapshot():
+    return _snapshot()
+
+
+@app.post("/control")
+async def control(ctl: Control):
+    if ctl.secret != settings.auth_token:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    a = ctl.action
+    if a == "close_all":
+        return mt5_client.close_all()
+    if a == "close_ticket":
+        if ctl.ticket is None:
+            return {"ok": False, "detail": "ticket required"}
+        return mt5_client.close_ticket(ctl.ticket)
+    if a == "flatten":
+        # Immediate close via the bridge AND tell the EA to stand down.
+        res = mt5_client.close_all()
+        ea_commands.write_command("FLATTEN")
+        return {"ok": True, "detail": f"flatten: {res['detail']} + EA stand-down"}
+    if a == "ea_auto":
+        return ea_commands.write_command("AUTO", (ctl.value or "OFF").upper())
+    if a == "ea_strategy":
+        return ea_commands.write_command("STRATEGY", (ctl.value or "").upper())
+    if a == "ea_risk_daily":
+        return ea_commands.write_command("RISK", "MAX_DAILY", ctl.value or "0")
+    return {"ok": False, "detail": "unknown action"}
+
+
+@app.websocket("/dashboard-ws")
+async def dashboard_ws(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            await ws.send_json(_snapshot())
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        with contextlib.suppress(Exception):
+            await ws.close()
 
 
 @app.post("/webhook", response_model=Result)

@@ -77,5 +77,12 @@ class Settings:
     # terminal's MQL5/Files folder so the EA can read it locally.
     levels_file: str = _get("LEVELS_FILE", "spircore_levels.csv")
 
+    # --- Reverse command bridge (dashboard -> Python -> EA) ---
+    # File the EA polls for control commands (AUTO ON/OFF, strategy, risk,
+    # close, flatten). Put it in the same MQL5/Files folder as the levels.
+    commands_file: str = _get("COMMANDS_FILE", "spircore_commands.csv")
+    # Journal file the EA writes (for the dashboard to read stats from).
+    journal_file: str = _get("JOURNAL_FILE", "spircore_journal.csv")
+
 
 settings = Settings()

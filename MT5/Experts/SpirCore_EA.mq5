@@ -55,6 +55,10 @@ input string   InpLevelsFile    = "spircore_levels.csv"; // File in MQL5/Files (
 input int      InpLevelsRefresh = 2;           // Re-read interval (seconds)
 input color    InpPyLineColor   = clrDeepSkyBlue; // Color for Python-pushed lines
 
+input group    "=== Dashboard Control / أوامر لوحة التحكم ==="
+input bool     InpReadCommands  = true;        // Obey control commands from the dashboard (via bridge)
+input string   InpCommandsFile  = "spircore_commands.csv"; // File in MQL5/Files (bridge writes it)
+
 input group    "=== Execution / التنفيذ ==="
 input int      InpSlippagePts   = 20;         // Max deviation/slippage in points
 input int      InpModifyRetries = 3;          // Retries for the ECN PositionModify step
@@ -118,6 +122,10 @@ bool           g_touchedUpper  = false;   // debounce flags so alert fires once 
 bool           g_touchedLower  = false;
 datetime       g_lastSignalBar = 0;       // last bar we evaluated the strategy on
 datetime       g_lastLevelsRead = 0;      // last time the Python levels file was read
+datetime       g_lastCmdRead   = 0;       // last time the commands file was read
+long           g_lastCmdId     = 0;       // id of the last executed dashboard command
+ENUM_STRATEGY  g_activeStrategy;          // runtime strategy (dashboard can switch it)
+double         g_riskMaxDaily;            // runtime daily-loss limit (dashboard can change it)
 
 // --- Object names (kept in one place for clean create/delete) -------
 #define OBJ_PREFIX     "SPIRCORE_"
@@ -154,19 +162,23 @@ int OnInit()
    g_autoOn = InpAutoStartOn;
 
    // --- Configure + initialize the strategy (analysis) engine ------
+   //   Always init (even if starting at NONE) so the dashboard can switch
+   //   strategies at runtime -- all indicator handles are ready.
    StratConfigure(InpCE_AtrPeriod, InpCE_Mult, InpZL_Period,
                   InpBB_Period, InpBB_Dev, InpRSI_Period,
                   InpLRC_Len, InpLRC_SmaLen, InpUTB_AtrLen, InpUTB_Coef,
                   InpSwingLook, InpTPCoef, InpStratSLDevPts);
-   if(InpStrategy != STRAT_NONE && !StratInit(InpSymbol, (ENUM_TIMEFRAMES)Period()))
+   if(!StratInit(InpSymbol, (ENUM_TIMEFRAMES)Period()))
    {
       Print("ERROR: strategy engine failed to initialize.");
       return(INIT_FAILED);
    }
+   g_activeStrategy = InpStrategy;   // runtime strategy (dashboard-switchable)
 
    // --- Configure the risk-management gate --------------------------
+   g_riskMaxDaily = InpMaxDailyLoss;
    RiskConfigure(InpSymbol, InpMagic, InpUseRiskSizing, InpRiskPercent,
-                 InpMaxDailyLoss, InpMaxTradesDay);
+                 g_riskMaxDaily, InpMaxTradesDay);
 
    // --- Build UI + first line levels -------------------------------
    CreatePanel();
@@ -214,6 +226,95 @@ void OnTick()
 
    // 5) BRIDGE LAYER: draw any levels pushed by the Python bridge.
    ReadPythonLevels();
+
+   // 6) CONTROL LAYER: obey dashboard commands relayed by the bridge.
+   ReadCommands();
+}
+
+//+------------------------------------------------------------------+
+//| Read & execute control commands from the dashboard (via bridge). |
+//| File holds ONE line: <id>,<CMD>,<arg1>,<arg2>. Latest wins; a    |
+//| command runs only when its id exceeds the last executed id.      |
+//+------------------------------------------------------------------+
+void ReadCommands()
+{
+   if(!InpReadCommands)
+      return;
+   if(TimeCurrent() - g_lastCmdRead < 1)   // poll ~once per second
+      return;
+   g_lastCmdRead = TimeCurrent();
+
+   int fh = FileOpen(InpCommandsFile, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+      return;
+
+   string line = "";
+   if(!FileIsEnding(fh))
+      line = FileReadString(fh);
+   FileClose(fh);
+   if(StringLen(line) == 0)
+      return;
+
+   string p[];
+   int n = StringSplit(line, ',', p);
+   if(n < 2)
+      return;
+
+   long id = (long)StringToInteger(p[0]);
+   if(id <= g_lastCmdId)     // already handled (or stale)
+      return;
+   g_lastCmdId = id;
+
+   ExecuteCommand(p[1], (n > 2 ? p[2] : ""), (n > 3 ? p[3] : ""));
+}
+
+//+------------------------------------------------------------------+
+//| Apply one dashboard command.                                     |
+//+------------------------------------------------------------------+
+void ExecuteCommand(const string cmd, const string a1, const string a2)
+{
+   PrintFormat("Dashboard command: %s %s %s", cmd, a1, a2);
+
+   if(cmd == "AUTO")
+   {
+      g_autoOn = (a1 == "ON");
+      RefreshAutoButton();
+      RefreshStatusLabel();
+   }
+   else if(cmd == "STRATEGY")
+   {
+      g_activeStrategy = StrategyFromName(a1);
+      ShowTouchBanner("Strategy set to " + StrategyName(g_activeStrategy));
+   }
+   else if(cmd == "RISK" && a1 == "MAX_DAILY")
+   {
+      g_riskMaxDaily = StringToDouble(a2);
+      RiskConfigure(InpSymbol, InpMagic, InpUseRiskSizing, InpRiskPercent,
+                    g_riskMaxDaily, InpMaxTradesDay);
+      ShowTouchBanner(StringFormat("Max daily loss set to %.1f%%", g_riskMaxDaily));
+   }
+   else if(cmd == "CLOSE" || cmd == "FLATTEN")
+   {
+      CloseAllOwn();
+      if(cmd == "FLATTEN")   // emergency: also stand the EA down
+      {
+         g_autoOn = false;
+         RefreshAutoButton();
+         RefreshStatusLabel();
+         ShowTouchBanner("FLATTENED - automation OFF");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Map a strategy name to the enum (default NONE).                  |
+//+------------------------------------------------------------------+
+ENUM_STRATEGY StrategyFromName(const string name)
+{
+   if(name == "CEZLSMA") return(STRAT_CEZLSMA);
+   if(name == "BBRSI")   return(STRAT_BBRSI);
+   if(name == "LRCUTB")  return(STRAT_LRCUTB);
+   return(STRAT_NONE);
 }
 
 //+------------------------------------------------------------------+
@@ -388,7 +489,7 @@ void ReadPythonLevels()
 //+------------------------------------------------------------------+
 void EvaluateStrategyOnNewBar()
 {
-   if(InpStrategy == STRAT_NONE)
+   if(g_activeStrategy == STRAT_NONE)
       return;
 
    datetime barTime = iTime(InpSymbol, PERIOD_CURRENT, 0);
@@ -396,7 +497,7 @@ void EvaluateStrategyOnNewBar()
       return;                 // still the same bar -> nothing new to decide
    g_lastSignalBar = barTime; // mark this bar handled (once)
 
-   SignalResult r = GetStrategySignal(InpStrategy);
+   SignalResult r = GetStrategySignal(g_activeStrategy);
    if(r.sig == SIG_NONE)
       return;
 
@@ -404,7 +505,7 @@ void EvaluateStrategyOnNewBar()
    // trader can confirm manually when Auto is OFF.
    string dir = (r.sig == SIG_BUY) ? "BUY" : "SELL";
    ShowTouchBanner(StringFormat("SIGNAL: %s (%s)  -> %s",
-                    dir, StrategyName(InpStrategy),
+                    dir, StrategyName(g_activeStrategy),
                     (g_autoOn ? "auto-executing" : "click BUY/SELL to confirm")));
 
    if(!g_autoOn)
@@ -433,7 +534,7 @@ void EvaluateStrategyOnNewBar()
    // Risk-% position sizing (needs a valid strategy SL); else fixed lot.
    double lot = RiskCalcLot(entry, r.sl, InpFixedLot);
 
-   OpenTradeECN(ot, "auto-" + StrategyName(InpStrategy), useSL, useTP, lot);
+   OpenTradeECN(ot, "auto-" + StrategyName(g_activeStrategy), useSL, useTP, lot);
 }
 
 //+------------------------------------------------------------------+
