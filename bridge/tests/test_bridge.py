@@ -66,5 +66,19 @@ class TestNotify(unittest.TestCase):
         notify.send("should not raise")  # no channels configured -> silent
 
 
+class TestSession(unittest.TestCase):
+    def test_normal_window(self):
+        import util
+        self.assertTrue(util.in_session(10, 8, 17))
+        self.assertFalse(util.in_session(7, 8, 17))
+        self.assertFalse(util.in_session(17, 8, 17))   # end is exclusive
+
+    def test_midnight_wrap(self):
+        import util
+        self.assertTrue(util.in_session(23, 22, 6))
+        self.assertTrue(util.in_session(2, 22, 6))
+        self.assertFalse(util.in_session(12, 22, 6))
+
+
 if __name__ == "__main__":
     unittest.main()

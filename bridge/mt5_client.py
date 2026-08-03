@@ -21,6 +21,7 @@ from typing import Optional
 import MetaTrader5 as mt5
 
 from config import settings
+from util import in_session
 
 _lock = threading.Lock()
 
@@ -28,8 +29,7 @@ _lock = threading.Lock()
 # ---------------------------------------------------------------------------
 # Connection lifecycle
 # ---------------------------------------------------------------------------
-def connect() -> None:
-    """Initialize the terminal connection. Raises RuntimeError on failure."""
+def _init_kwargs() -> dict:
     kwargs = {}
     if settings.mt5_path:
         kwargs["path"] = settings.mt5_path
@@ -39,12 +39,35 @@ def connect() -> None:
             password=settings.mt5_password,
             server=settings.mt5_server,
         )
+    return kwargs
 
-    if not mt5.initialize(**kwargs):
+
+def connect() -> None:
+    """Initialize the terminal connection. Raises RuntimeError on failure."""
+    if not mt5.initialize(**_init_kwargs()):
         raise RuntimeError(f"MT5 initialize failed: {mt5.last_error()}")
-
     if not mt5.symbol_select(settings.symbol, True):
         raise RuntimeError(f"Could not select symbol {settings.symbol}")
+
+
+def ensure_connected() -> bool:
+    """Watchdog: reconnect if the terminal link dropped. Returns True if up."""
+    info = mt5.terminal_info()
+    if info is not None and info.connected:
+        return True
+    with _lock:
+        # Re-check under the lock, then attempt a re-initialize.
+        info = mt5.terminal_info()
+        if info is not None and info.connected:
+            return True
+        print("[watchdog] MT5 link down -> reinitializing")
+        try:
+            mt5.initialize(**_init_kwargs())
+            mt5.symbol_select(settings.symbol, True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[watchdog] reinit error: {exc}")
+        info = mt5.terminal_info()
+        return bool(info and info.connected)
 
 
 def shutdown() -> None:
@@ -209,11 +232,29 @@ def trades_today(symbol: Optional[str] = None) -> int:
     )
 
 
-def risk_guard(symbol: Optional[str] = None) -> Optional[str]:
+def session_ok() -> bool:
+    """True if trading is allowed now (session-hours kill-switch)."""
+    if not settings.use_session_filter:
+        return True
+    return in_session(datetime.now().hour,
+                      settings.session_start_hour, settings.session_end_hour)
+
+
+def total_lots(symbol: Optional[str] = None) -> float:
+    s = _sym(symbol)
+    return sum(p.volume for p in (mt5.positions_get(symbol=s) or [])
+              if p.magic == settings.magic)
+
+
+def risk_guard(symbol: Optional[str] = None, add_lots: float = 0.0) -> Optional[str]:
     """Return a block reason if a hard risk limit is hit, else None."""
     s = _sym(symbol)
+    if not session_ok():
+        return "outside trading session (kill-switch)"
     if settings.max_trades_per_day > 0 and trades_today(s) >= settings.max_trades_per_day:
         return "max trades/day reached"
+    if settings.max_total_lots > 0 and (total_lots(s) + add_lots) > settings.max_total_lots:
+        return f"max total lots {settings.max_total_lots} would be exceeded"
     if settings.max_daily_loss_pct > 0:
         acc = mt5.account_info()
         if acc:
@@ -260,17 +301,17 @@ def open_ecn(
         if count_own_positions(s) >= settings.max_positions:
             return {"ok": False, "detail": "max positions reached"}
 
-        blocked = risk_guard(s)
-        if blocked:
-            print(f"[risk] BLOCK: {blocked}")
-            return {"ok": False, "detail": f"risk guard: {blocked}"}
-
         info = mt5.symbol_info(s)
         tick = mt5.symbol_info_tick(s)
         if info is None or tick is None:
             return {"ok": False, "detail": "no market data"}
 
         volume = _normalize_lot(s, lot if lot else settings.default_lot)
+
+        blocked = risk_guard(s, add_lots=volume)
+        if blocked:
+            print(f"[risk] BLOCK: {blocked}")
+            return {"ok": False, "detail": f"risk guard: {blocked}"}
         price = tick.ask if is_buy else tick.bid
 
         # ----- STEP 1: bare market order (no SL/TP) -----------------------
