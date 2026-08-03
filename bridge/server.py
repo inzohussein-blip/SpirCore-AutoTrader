@@ -127,6 +127,9 @@ async def ws_endpoint(ws: WebSocket):
             raw = await ws.receive_text()
             try:
                 data = json.loads(raw)
+                if data.get("action") == "ping":
+                    await ws.send_json({"ok": True, "action": "ping", "detail": "pong"})
+                    continue
                 sig = Signal(**data)
             except (json.JSONDecodeError, ValidationError) as exc:
                 await ws.send_json({"ok": False, "detail": f"bad message: {exc}"})

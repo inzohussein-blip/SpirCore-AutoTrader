@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SpirCore Bridge</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">SpirCore</span>
+    <span id="status" class="status off">offline</span>
+  </header>
+
+  <section class="config">
+    <label>Bridge host
+      <input id="host" type="text" placeholder="127.0.0.1" />
+    </label>
+    <label>Port
+      <input id="port" type="number" placeholder="8000" />
+    </label>
+    <label>Auth token
+      <input id="token" type="password" placeholder="shared secret" />
+    </label>
+    <div class="row">
+      <label>Symbol
+        <input id="symbol" type="text" placeholder="XAUUSD" />
+      </label>
+      <label>Lot
+        <input id="lot" type="number" step="0.01" placeholder="0.10" />
+      </label>
+    </div>
+    <button id="save" class="btn secondary">Save &amp; Connect</button>
+  </section>
+
+  <section class="actions">
+    <div class="row">
+      <button id="buy"  class="btn buy">BUY</button>
+      <button id="sell" class="btn sell">SELL</button>
+    </div>
+    <button id="close" class="btn neutral">CLOSE ALL</button>
+  </section>
+
+  <p id="log" class="log"></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

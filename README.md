@@ -11,7 +11,7 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 |---------|--------|--------|
 | **Phase 1** | النواة المحلية MQL5 (EA) — التنفيذ + الرسم + الأزرار | ✅ منجزة |
 | **Phase 2** | جسر Python المحلي (FastAPI + MetaTrader5) | ✅ منجزة |
-| **Phase 3** | إضافة كروم (اعتراض تنبيهات TradingView عبر WebSocket) | ⏳ قادمة |
+| **Phase 3** | إضافة كروم (اعتراض تنبيهات TradingView عبر WebSocket) | ✅ منجزة |
 
 ---
 
@@ -107,5 +107,50 @@ python server.py              # أو: uvicorn server:app --host 127.0.0.1 --port
 
 ---
 
-## الخطوات القادمة / Next Steps
-- **Phase 3**: بناء إضافة كروم لاعتراض تنبيهات TradingView وإرسالها عبر WebSocket (`/ws`) إلى جسر Python.
+---
+
+## Phase 3 — Chrome Extension (`extension/`)
+
+إضافة كروم (Manifest V3) تعترض تنبيهات TradingView وتنقلها فوراً عبر **WebSocket** إلى جسر Python المحلي (`/ws`).
+
+### الملفات
+| الملف | الوظيفة |
+|-------|---------|
+| `manifest.json` | تعريف الإضافة (MV3) وصلاحياتها على TradingView |
+| `background.js` | Service Worker: يدير اتصال WebSocket الدائم + إعادة اتصال تلقائية + keep-alive |
+| `content.js` | يراقب سجل تنبيهات TradingView ويحوّل نصها إلى إشارات |
+| `popup.html/.css/.js` | واجهة إعدادات + أزرار يدوية (BUY/SELL/CLOSE) + مؤشر حالة الاتصال |
+
+### قواعد نص التنبيه في TradingView
+اجعل نص التنبيه يبدأ بالكلمة `SPIRCORE` ثم الأمر:
+```
+SPIRCORE BUY
+SPIRCORE SELL XAUUSD 0.20
+SPIRCORE CLOSE
+SPIRCORE DRAW 3358.4 3341.1
+```
+> يمكنك أيضاً الاختبار من كونسول الصفحة: `window.__spircore("SPIRCORE BUY XAUUSD 0.10")`.
+
+### التركيب
+1. افتح كروم → `chrome://extensions` → فعّل **Developer mode**.
+2. اضغط **Load unpacked** → اختر مجلد `extension/`.
+3. افتح الإضافة من شريط الأدوات، وأدخل: **host** (127.0.0.1)، **port** (8000)، **Auth token** (نفس `BRIDGE_AUTH_TOKEN`)، **Symbol/Lot** ثم **Save & Connect**.
+4. عندما يعمل جسر Python سترى المؤشر **online** أخضر.
+
+---
+
+## 🔄 التدفق الكامل للنظام / End-to-End Flow
+```
+TradingView Alert ──► Chrome Extension (content.js)
+        │                     │ WebSocket
+        │                     ▼
+        │             Python Bridge (FastAPI /ws)
+        │                     │ MetaTrader5 lib
+        │                     ▼
+        │             MT5 Terminal ◄── SpirCore_EA (ECN exec + GUI + strategies)
+        │                     ▲ CSV levels
+        └── (or draw levels) ──┘
+```
+
+## ⚠️ إخلاء مسؤولية / Disclaimer
+هذا النظام لأغراض تعليمية وبحثية. التداول الآلي على الذهب عالي المخاطر. **اختبر دائماً على حساب تجريبي (Demo)** وراجع الكود قبل أي استخدام حقيقي.
