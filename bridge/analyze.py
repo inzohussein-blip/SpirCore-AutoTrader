@@ -66,31 +66,35 @@ def _trade_pnl(row: dict) -> float:
     return num("profit") + num("swap") + num("commission")
 
 
-def analyze(path: str) -> Stats:
+def stats_from_pnls(pnls: list[float]) -> Stats:
+    """Build a Stats from a sequence of per-trade P/L values. Shared by the
+    journal analyzer and the backtester so both report identically."""
     st = Stats()
     equity = 0.0
     peak = 0.0
+    for pnl in pnls:
+        st.trades += 1
+        st.net += pnl
+        if pnl >= 0:
+            st.wins += 1
+            st.gross_profit += pnl
+            st.largest_win = max(st.largest_win, pnl)
+        else:
+            st.losses += 1
+            st.gross_loss += pnl
+            st.largest_loss = min(st.largest_loss, pnl)
 
-    with open(path, newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            pnl = _trade_pnl(row)
-            st.trades += 1
-            st.net += pnl
-            if pnl >= 0:
-                st.wins += 1
-                st.gross_profit += pnl
-                st.largest_win = max(st.largest_win, pnl)
-            else:
-                st.losses += 1
-                st.gross_loss += pnl
-                st.largest_loss = min(st.largest_loss, pnl)
-
-            equity += pnl
-            st.equity_curve.append(equity)
-            peak = max(peak, equity)
-            st.max_drawdown = min(st.max_drawdown, equity - peak)
-
+        equity += pnl
+        st.equity_curve.append(equity)
+        peak = max(peak, equity)
+        st.max_drawdown = min(st.max_drawdown, equity - peak)
     return st
+
+
+def analyze(path: str) -> Stats:
+    with open(path, newline="", encoding="utf-8") as fh:
+        pnls = [_trade_pnl(row) for row in csv.DictReader(fh)]
+    return stats_from_pnls(pnls)
 
 
 def _fmt(x: float) -> str:

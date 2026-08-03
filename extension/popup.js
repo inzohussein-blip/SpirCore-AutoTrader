@@ -40,6 +40,9 @@ async function load() {
   $("lot").value = stored.lot ?? 0.1;
   $("mode").value = stored.mode ?? "auto";
 
+  const sel = await chrome.storage.local.get(["webSelectors"]);
+  $("webSelectors").value = sel.webSelectors ? JSON.stringify(sel.webSelectors) : "";
+
   chrome.runtime.sendMessage({ type: "getStatus" }, (res) => {
     if (res) setStatus(res);
   });
@@ -55,6 +58,20 @@ async function save() {
     lot: Number($("lot").value) || 0.1,
     mode: $("mode").value || "auto",
   };
+  // Parse the optional custom-selectors JSON; store separately (read by
+  // mt5web.js). Invalid JSON is reported and the field is left unchanged.
+  const raw = $("webSelectors").value.trim();
+  if (raw) {
+    try {
+      await chrome.storage.local.set({ webSelectors: JSON.parse(raw) });
+    } catch (e) {
+      log("invalid selectors JSON — not saved");
+      return;
+    }
+  } else {
+    await chrome.storage.local.remove("webSelectors");
+  }
+
   await chrome.storage.local.set(cfg);
   chrome.runtime.sendMessage({ type: "configUpdated" }, () => log("saved, reconnecting…"));
 }

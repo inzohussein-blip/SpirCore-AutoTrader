@@ -43,7 +43,7 @@ section { background: var(--panel); border-radius: 8px; padding: 10px; margin-bo
 
 label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
 
-input, select {
+input, select, textarea {
   width: 100%;
   margin-top: 3px;
   padding: 6px 8px;
@@ -52,6 +52,8 @@ input, select {
   border-radius: 6px;
   color: var(--text);
   font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
 }
 
 .row { display: flex; gap: 8px; }

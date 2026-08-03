@@ -23,6 +23,8 @@
   "use strict";
 
   // --- Adjustable selectors (best-effort; edit to match your terminal) -----
+  // Users can ALSO add broker-specific selectors from the popup ("Custom
+  // selectors" JSON); those are merged ahead of these defaults at runtime.
   const SELECTORS = {
     // The volume/lots input in the one-click panel or order dialog.
     volume: [
@@ -54,6 +56,19 @@
       ".close-all",
     ],
   };
+
+  // Merge user-supplied selectors (from popup) ahead of the defaults so a
+  // broker-specific tweak wins without editing this file.
+  chrome.storage.local.get(["webSelectors"]).then((res) => {
+    const custom = res.webSelectors;
+    if (!custom || typeof custom !== "object") return;
+    for (const key of Object.keys(SELECTORS)) {
+      if (Array.isArray(custom[key]) && custom[key].length) {
+        SELECTORS[key] = [...custom[key], ...SELECTORS[key]];
+      }
+    }
+    console.log("[spircore] custom MT5 Web selectors merged");
+  }).catch(() => {});
 
   // -------------------------------------------------------------------------
   function findFirst(selList) {
