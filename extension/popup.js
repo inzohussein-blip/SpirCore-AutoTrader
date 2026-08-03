@@ -4,12 +4,26 @@
  */
 
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["host", "port", "token", "symbol", "lot"];
+const FIELDS = ["host", "port", "token", "symbol", "lot", "mode"];
 
-function setStatus(connected) {
+// Status reflects the ACTIVE backend for the current mode:
+//   bridge/auto -> WebSocket connected?   web -> an MT5 Web tab open?
+function setStatus(st) {
+  const mode = st.mode || "auto";
+  let online, label;
+  if (mode === "web") {
+    online = (st.webTabs || 0) > 0;
+    label = online ? "web ready" : "no web tab";
+  } else if (mode === "bridge") {
+    online = !!st.connected;
+    label = online ? "bridge on" : "bridge off";
+  } else {
+    online = !!st.connected || (st.webTabs || 0) > 0;
+    label = st.connected ? "bridge on" : (st.webTabs ? "web ready" : "offline");
+  }
   const el = $("status");
-  el.textContent = connected ? "online" : "offline";
-  el.className = "status " + (connected ? "on" : "off");
+  el.textContent = label;
+  el.className = "status " + (online ? "on" : "off");
 }
 
 function log(msg) {
@@ -24,9 +38,10 @@ async function load() {
   $("token").value = stored.token ?? "";
   $("symbol").value = stored.symbol ?? "XAUUSD";
   $("lot").value = stored.lot ?? 0.1;
+  $("mode").value = stored.mode ?? "auto";
 
   chrome.runtime.sendMessage({ type: "getStatus" }, (res) => {
-    if (res) setStatus(res.connected);
+    if (res) setStatus(res);
   });
 }
 
@@ -38,6 +53,7 @@ async function save() {
     token: $("token").value,
     symbol: $("symbol").value.trim() || "XAUUSD",
     lot: Number($("lot").value) || 0.1,
+    mode: $("mode").value || "auto",
   };
   await chrome.storage.local.set(cfg);
   chrome.runtime.sendMessage({ type: "configUpdated" }, () => log("saved, reconnecting…"));
@@ -47,13 +63,13 @@ async function save() {
 function send(action) {
   chrome.runtime.sendMessage(
     { type: "signal", payload: { action } },
-    (res) => log(res ? `${action}: ${res.detail}` : `${action}: no response`)
+    (res) => log(res ? `${action} [${res.backend || "?"}]: ${res.detail}` : `${action}: no response`)
   );
 }
 
 // --- Live updates pushed by the worker ---
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "status") setStatus(msg.connected);
+  if (msg.type === "status") setStatus(msg);
   if (msg.type === "wsReply" && msg.payload) {
     const p = msg.payload;
     log(`${p.action ?? "reply"}: ${p.detail ?? JSON.stringify(p)}`);
@@ -62,6 +78,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // --- Wire up ---
 $("save").addEventListener("click", save);
+$("mode").addEventListener("change", save);
 $("buy").addEventListener("click", () => send("buy"));
 $("sell").addEventListener("click", () => send("sell"));
 $("close").addEventListener("click", () => send("close"));

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 from typing import Optional
 
 import MetaTrader5 as mt5
@@ -95,6 +96,53 @@ def count_own_positions(symbol: Optional[str] = None) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Risk guard (mirrors the EA: daily loss limit + trades/day cap)
+# ---------------------------------------------------------------------------
+def _start_of_day() -> datetime:
+    now = datetime.now()
+    return datetime(now.year, now.month, now.day)
+
+
+def daily_pnl(symbol: Optional[str] = None) -> float:
+    """Today's realized (closed deals) + floating P/L for this EA's magic."""
+    s = _sym(symbol)
+    realized = 0.0
+    deals = mt5.history_deals_get(_start_of_day(), datetime.now()) or []
+    for d in deals:
+        if d.magic == settings.magic and d.symbol == s:
+            realized += d.profit + d.swap + d.commission
+    floating = 0.0
+    for p in mt5.positions_get(symbol=s) or []:
+        if p.magic == settings.magic:
+            floating += p.profit + p.swap
+    return realized + floating
+
+
+def trades_today(symbol: Optional[str] = None) -> int:
+    s = _sym(symbol)
+    deals = mt5.history_deals_get(_start_of_day(), datetime.now()) or []
+    return sum(
+        1 for d in deals
+        if d.magic == settings.magic and d.symbol == s and d.entry == mt5.DEAL_ENTRY_IN
+    )
+
+
+def risk_guard(symbol: Optional[str] = None) -> Optional[str]:
+    """Return a block reason if a hard risk limit is hit, else None."""
+    s = _sym(symbol)
+    if settings.max_trades_per_day > 0 and trades_today(s) >= settings.max_trades_per_day:
+        return "max trades/day reached"
+    if settings.max_daily_loss_pct > 0:
+        acc = mt5.account_info()
+        if acc:
+            max_loss = acc.balance * settings.max_daily_loss_pct / 100.0
+            pnl = daily_pnl(s)
+            if pnl <= -max_loss:
+                return f"daily loss limit hit (P/L {pnl:.2f} <= -{max_loss:.2f})"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Execution (ECN discipline)
 # ---------------------------------------------------------------------------
 def _filling_mode(symbol: str) -> int:
@@ -129,6 +177,11 @@ def open_ecn(
 
         if count_own_positions(s) >= settings.max_positions:
             return {"ok": False, "detail": "max positions reached"}
+
+        blocked = risk_guard(s)
+        if blocked:
+            print(f"[risk] BLOCK: {blocked}")
+            return {"ok": False, "detail": f"risk guard: {blocked}"}
 
         info = mt5.symbol_info(s)
         tick = mt5.symbol_info_tick(s)

@@ -217,6 +217,13 @@ bool ChandelierState(int &dirOut, double &longStopOut, double &shortStopOut)
    ArraySetAsSeries(shortStop, true);
    ArraySetAsSeries(dir,       true);
 
+   // ArrayResize does NOT zero new elements in MQL5; the loop reads
+   // [i+1] on its first pass, so seed the arrays explicitly to avoid
+   // garbage trailing-stop state (which would corrupt the signal).
+   ArrayInitialize(longStop,  0.0);
+   ArrayInitialize(shortStop, 0.0);
+   ArrayInitialize(dir,       0);
+
    // iterate oldest -> newest (index LOOK-1 down to 0)
    for(int i = LOOK - 2; i >= 1; i--)
    {
@@ -304,9 +311,8 @@ SignalResult Signal_BBRSI()
       rsi[1] > 30 && close[1] > lb[1] &&
       rsi[1] < 50 && close[1] < mb[1])
    {
-      double bandWidth = mb[1] - lb[1];
       r.sig = SIG_BUY;
-      r.sl  = lb[1] - bandWidth * 0.0 - dev; // stop just below the lower band
+      r.sl  = lb[1] - dev;   // stop just below the lower band
       // TP shaped from risk distance later in BuildTP()
    }
    // --- SELL (mean reversion down off the upper band) ---
@@ -314,9 +320,8 @@ SignalResult Signal_BBRSI()
            rsi[1] < 70 && close[1] < ub[1] &&
            rsi[1] > 50 && close[1] > mb[1])
    {
-      double bandWidth = ub[1] - mb[1];
       r.sig = SIG_SELL;
-      r.sl  = ub[1] + bandWidth * 0.0 + dev; // stop just above the upper band
+      r.sl  = ub[1] + dev;   // stop just above the upper band
    }
    return(r);
 }
@@ -354,6 +359,7 @@ bool UTBotState(bool &buySig[], bool &sellSig[], const int count)
    double stop[];
    ArrayResize(stop, count);
    ArraySetAsSeries(stop, true);
+   ArrayInitialize(stop, 0.0); // seed: loop reads stop[i+1] on first pass
 
    ArrayResize(buySig,  count);
    ArrayResize(sellSig, count);

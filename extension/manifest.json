@@ -1,11 +1,15 @@
 {
   "manifest_version": 3,
   "name": "SpirCore Bridge",
-  "version": "1.0.0",
-  "description": "Intercept TradingView alerts and relay them over WebSocket to the local SpirCore Python bridge (XAUUSD / MT5).",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "version": "1.1.0",
+  "description": "Relay TradingView alerts to MT5 for XAUUSD - via the local Python bridge (desktop MT5) OR directly on the MT5 Web terminal (no app needed).",
+  "permissions": ["storage", "activeTab", "scripting", "tabs"],
   "host_permissions": [
-    "*://*.tradingview.com/*"
+    "*://*.tradingview.com/*",
+    "*://trade.mql5.com/*",
+    "*://*.mql5.com/*",
+    "*://web.metatrader5.com/*",
+    "*://*.metatrader5.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,6 +22,16 @@
     {
       "matches": ["*://*.tradingview.com/*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://trade.mql5.com/*",
+        "*://*.mql5.com/*",
+        "*://web.metatrader5.com/*",
+        "*://*.metatrader5.com/*"
+      ],
+      "js": ["mt5web.js"],
       "run_at": "document_idle"
     }
   ]

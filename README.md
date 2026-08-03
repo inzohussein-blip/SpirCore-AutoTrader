@@ -5,6 +5,14 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 
 > 🚀 للتشغيل السريع خطوة بخطوة، راجع **[QUICKSTART.md](QUICKSTART.md)**.
 
+---
+
+## ⚠️ توقعات واقعية (اقرأ هذا أولاً) / Reality Check
+- **لا يوجد بوت "يغني عن المتداول المحترف" أو يضمن الربح.** الأسواق تنافسية، والاستراتيجيات المدمجة هنا (CEZLSMA / BBRSI / LRCUTB) هي استراتيجيات retail مفتوحة المصدر **بلا أفضلية مثبتة** على الذهب.
+- **الخطر الأكبر هو خسارة رأس المال.** السبريد والانزلاق ورسوم التبييت تقضم النتائج، وغالبية أنظمة الأتمتة الجاهزة تخسر على المدى الطويل.
+- ما يجعل النظام **احترافياً** ليس استراتيجية سحرية، بل: **إدارة مخاطر صارمة، أمان، متانة، واختبار** — وهذا ما بُني هنا (حد خسارة يومي، تحجيم بالمخاطرة، فلتر سبريد، أتمتة مطفأة افتراضياً).
+- **قبل أي مال حقيقي:** اختبر على Demo لأسابيع، ثم Backtest/Optimize على Strategy Tester، وابدأ بأصغر لوت. لا تخاطر بما لا تحتمل خسارته.
+
 ## البنية العامة / Architecture
 
 النظام مقسوم إلى ثلاث طبقات مستقلة ومترابطة:
@@ -22,8 +30,31 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 الملفات:
 - `MT5/Experts/SpirCore_EA.mq5` — النواة (تنفيذ + رسم + أزرار).
 - `MT5/Experts/SpirCore_Strategies.mqh` — محرك الاستراتيجيات (التحليل/الإشارات).
+- `MT5/Experts/SpirCore_Risk.mqh` — طبقة إدارة المخاطر (حدود يومية + تحجيم).
 
-> ضع **كلا الملفين** معاً داخل `MQL5/Experts/` (الـ include يجب أن يكون بجانب الـ EA).
+> ضع **الملفات الثلاثة** معاً داخل `MQL5/Experts/` (ملفات الـ include يجب أن تكون بجانب الـ EA).
+
+### 🛡️ إدارة المخاطر (طبقة احترافية)
+حدود ميكانيكية صارمة تحمي حسابك — تُطبَّق على مسار الأتمتة (والجسر أيضاً):
+| الإعداد | الوظيفة | الافتراضي |
+|---------|---------|:---:|
+| `InpMaxDailyLoss` | إيقاف الأتمتة بعد بلوغ خسارة يومية % من الرصيد | 5% |
+| `InpMaxTradesDay` | حد أقصى لعدد صفقات الأتمتة يومياً (مكافحة الإفراط) | 10 |
+| `InpUseRiskSizing` | تحجيم اللوت تلقائياً بحيث تخاطر بنسبة ثابتة لكل صفقة | OFF |
+| `InpRiskPercent` | نسبة المخاطرة % لكل صفقة (عند تفعيل التحجيم) | 1% |
+
+> نفس الحدود موجودة في جسر Python (`MAX_DAILY_LOSS_PCT`, `MAX_TRADES_PER_DAY`) لحماية الصفقات القادمة من التنبيهات.
+
+### 📈 إدارة الصفقات المفتوحة (Break-even + Trailing)
+يدير الـ EA الصفقات المفتوحة تلقائياً — يحرّك الستوب في الاتجاه المربح فقط:
+| الإعداد | الوظيفة | الافتراضي |
+|---------|---------|:---:|
+| `InpUseBreakEven` + `InpBETriggerPts` / `InpBELockPts` | نقل الستوب لنقطة الدخول (+قفل) عند بلوغ ربح معيّن | 300 / 20 نقطة |
+| `InpUseTrailing` + `InpTrailStartPts` / `InpTrailDistPts` / `InpTrailStepPts` | ستوب متحرك يقفل الأرباح مع تقدّم السعر | 400 / 250 / 30 نقطة |
+
+### 📓 سجل الصفقات + الإحصاءات الحية
+- **السجل**: كل صفقة مغلقة تُكتب تلقائياً إلى `spircore_journal.csv` (عبر `OnTradeTransaction`) — الوقت، النوع، اللوت، السعر، الربح، السواب، العمولة، التعليق.
+- **قراءة حية على اللوحة**: صف يعرض **ربح/خسارة اليوم + عدد الصفقات + نسبة الفوز** (أخضر/أحمر).
 
 ### الميزات المنجزة
 1. **تنفيذ متوافق مع ECN/STP**: يفتح الصفقة بسعر السوق **بدون** SL/TP، ثم يلحق الأهداف فوراً عبر `PositionModify` (مع إعادة محاولة) لتجنب رفض بروكرز الـ ECN.
@@ -76,7 +107,15 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 | `mt5_client.py` | الاتصال بـ MT5 + تنفيذ ECN + فلتر السبريد (نفس منطق الـ EA) |
 | `levels.py` | كتابة المستويات إلى ملف يقرأه الـ EA ليرسمها |
 | `server.py` | خادم FastAPI: Webhook + WebSocket + حالة |
+| `analyze.py` | **أداة تحليل الأداء** — تقرأ سجل الصفقات وتحسب المقاييس الاحترافية |
 | `requirements.txt` / `.env.example` | التبعيات والإعدادات |
+
+### 📊 أداة تحليل الأداء (`analyze.py`)
+تقرأ `spircore_journal.csv` وتطبع تقريراً بلا أي تبعيات خارجية:
+```bash
+python analyze.py path/to/spircore_journal.csv
+```
+تحسب: **عدد الصفقات، نسبة الفوز، صافي الربح، Profit Factor، التوقّع/صفقة (Expectancy)، متوسط الربح/الخسارة، أقصى تراجع (Max Drawdown)** — مع حكم صريح (نظام خاسر / أفضلية هامشية / إيجابي على العيّنة). هذه الأرقام هي ما يكشف إن كانت للاستراتيجية أفضلية حقيقية.
 
 ### نقاط الاتصال (Endpoints)
 - `GET  /health` — فحص الحياة.
@@ -119,10 +158,22 @@ python server.py              # أو: uvicorn server:app --host 127.0.0.1 --port
 ### الملفات
 | الملف | الوظيفة |
 |-------|---------|
-| `manifest.json` | تعريف الإضافة (MV3) وصلاحياتها على TradingView |
-| `background.js` | Service Worker: يدير اتصال WebSocket الدائم + إعادة اتصال تلقائية + keep-alive |
+| `manifest.json` | تعريف الإضافة (MV3) وصلاحياتها على TradingView + منصة MT5 Web |
+| `background.js` | Service Worker: توجيه الإشارات (bridge/web/auto) + WebSocket + إعادة اتصال + keep-alive |
 | `content.js` | يراقب سجل تنبيهات TradingView ويحوّل نصها إلى إشارات |
-| `popup.html/.css/.js` | واجهة إعدادات + أزرار يدوية (BUY/SELL/CLOSE) + مؤشر حالة الاتصال |
+| `mt5web.js` | **أتمتة منصة MT5 Web** مباشرةً (نقر Buy/Sell وضبط اللوت) — بدون تطبيق سطح المكتب |
+| `popup.html/.css/.js` | واجهة إعدادات + **اختيار وضع التنفيذ** + أزرار يدوية + مؤشر حالة |
+
+### 🔀 أوضاع التنفيذ (Execution Modes) — جديد
+الإضافة تدعم الآن مسارين للتنفيذ، تختار بينهما من نافذة الإضافة:
+| الوضع | الشرح | يحتاج تطبيق MT5؟ | يحتاج جسر Python؟ |
+|-------|-------|:---:|:---:|
+| **Bridge** | يرسل عبر WebSocket لجسر Python → تطبيق MT5 (سطح المكتب) | ✅ | ✅ |
+| **MT5 Web** | يؤتمت **منصة MT5 على الويب** مباشرةً داخل المتصفح (نقر الأزرار) | ❌ | ❌ |
+| **Auto** | يفضّل الجسر إن كان متصلاً، وإلا يسقط تلقائياً لوضع الويب | اختياري | اختياري |
+
+> **وضع MT5 Web** يعمل على `trade.mql5.com` و `web.metatrader5.com` وواجهات البروكرز البيضاء. افتح لوحة **One-Click Trading** في المنصة لأفضل موثوقية. محدّدات الـ DOM قابلة للتعديل في مكان واحد داخل `mt5web.js` (`SELECTORS`) لأنها تختلف بين الإصدارات والبروكرز.
+> للاختبار اليدوي من كونسول صفحة المنصة: `window.__spircoreWeb("buy", 0.10)`.
 
 ### قواعد نص التنبيه في TradingView
 اجعل نص التنبيه يبدأ بالكلمة `SPIRCORE` ثم الأمر:
@@ -137,23 +188,29 @@ SPIRCORE DRAW 3358.4 3341.1
 ### التركيب
 1. افتح كروم → `chrome://extensions` → فعّل **Developer mode**.
 2. اضغط **Load unpacked** → اختر مجلد `extension/`.
-3. افتح الإضافة من شريط الأدوات، وأدخل: **host** (127.0.0.1)، **port** (8000)، **Auth token** (نفس `BRIDGE_AUTH_TOKEN`)، **Symbol/Lot** ثم **Save & Connect**.
-4. عندما يعمل جسر Python سترى المؤشر **online** أخضر.
+3. افتح الإضافة من شريط الأدوات، واختر **Execution mode** (Auto / Bridge / MT5 Web)، وأدخل: **host** (127.0.0.1)، **port** (8000)، **Auth token** (نفس `BRIDGE_AUTH_TOKEN`)، **Symbol/Lot** ثم **Save & Connect**.
+4. **وضع Bridge/Auto**: عندما يعمل جسر Python سترى المؤشر **bridge on** أخضر.
+   **وضع MT5 Web**: افتح تبويب منصة MT5 على الويب (مثل `trade.mql5.com`) وسيظهر **web ready** أخضر.
 
 ---
 
 ## 🔄 التدفق الكامل للنظام / End-to-End Flow
 ```
 TradingView Alert ──► Chrome Extension (content.js)
-        │                     │ WebSocket
-        │                     ▼
-        │             Python Bridge (FastAPI /ws)
-        │                     │ MetaTrader5 lib
-        │                     ▼
-        │             MT5 Terminal ◄── SpirCore_EA (ECN exec + GUI + strategies)
-        │                     ▲ CSV levels
-        └── (or draw levels) ──┘
+                            │
+              ┌─────────────┴─────────────┐
+     Bridge mode                     MT5 Web mode
+              │ WebSocket                  │ UI automation (mt5web.js)
+              ▼                            ▼
+     Python Bridge (FastAPI /ws)     MT5 Web Terminal (browser)
+              │ MetaTrader5 lib            │  (no desktop app needed)
+              ▼                            ▼
+     MT5 Desktop ◄── SpirCore_EA     صفقة تُفتح مباشرة
+     (ECN exec + GUI + strategies)
+              ▲ CSV levels
+              └── (draw levels)
 ```
+> في وضع **Auto** يختار المسار تلقائياً: الجسر إن كان متاحاً، وإلا منصة الويب.
 
 ## ⚠️ إخلاء مسؤولية / Disclaimer
 هذا النظام لأغراض تعليمية وبحثية. التداول الآلي على الذهب عالي المخاطر. **اختبر دائماً على حساب تجريبي (Demo)** وراجع الكود قبل أي استخدام حقيقي.
