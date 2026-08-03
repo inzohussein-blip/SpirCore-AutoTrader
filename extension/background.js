@@ -176,6 +176,22 @@ async function routeSignal(sig) {
   return await sendViaWeb(payload);
 }
 
+// Send a control action to the bridge's REST /control endpoint.
+async function sendControl(payload) {
+  const url = `http://${cfg.host}:${cfg.port}/control`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: cfg.token, ...payload }),
+    });
+    const j = await res.json().catch(() => ({}));
+    return { ok: res.ok, detail: j.detail || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, detail: `bridge unreachable: ${e.message}` };
+  }
+}
+
 function broadcastStatus() {
   chrome.runtime
     .sendMessage({
@@ -206,6 +222,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           broadcastStatus();
         }
         sendResponse({ ok: true });
+        break;
+      }
+      case "control": {
+        // Relay a control action (e.g. strategy/mode select) to the bridge.
+        const res = await sendControl(msg.payload || {});
+        sendResponse(res);
         break;
       }
       case "getStatus":

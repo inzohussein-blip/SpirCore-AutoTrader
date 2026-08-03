@@ -9,7 +9,9 @@
     "*://trade.mql5.com/*",
     "*://*.mql5.com/*",
     "*://web.metatrader5.com/*",
-    "*://*.metatrader5.com/*"
+    "*://*.metatrader5.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"

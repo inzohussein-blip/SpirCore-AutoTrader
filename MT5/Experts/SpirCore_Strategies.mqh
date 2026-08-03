@@ -20,9 +20,11 @@
 enum ENUM_STRATEGY
 {
    STRAT_NONE     = 0,   // None (manual only)
-   STRAT_CEZLSMA  = 1,   // CEZLSMA - trend (Chandelier Exit + ZLSMA + HA)
-   STRAT_BBRSI    = 2,   // BBRSI - mean reversion (Bollinger + RSI)
-   STRAT_LRCUTB   = 3    // LRCUTB - momentum (Lin.Reg Candles + UT Bot)
+   STRAT_CEZLSMA  = 1,   // CEZLSMA  - trend (Chandelier Exit + ZLSMA + HA)
+   STRAT_BBRSI    = 2,   // BBRSI    - mean reversion (Bollinger + RSI)
+   STRAT_LRCUTB   = 3,   // LRCUTB   - momentum (Lin.Reg Candles + UT Bot)
+   STRAT_2MACDSTO = 4,   // 2MACDSTO - momentum (two MACDs + Stochastic)
+   STRAT_NWE      = 5    // NWE      - mean reversion (Nadaraya-Watson Envelope, adapted from NWERSIASF)
 };
 
 enum ENUM_SIGNAL { SIG_NONE = 0, SIG_BUY = 1, SIG_SELL = -1 };
@@ -53,6 +55,14 @@ int    S_LRC_SmaLen   = 7;     // Signal SMA length over LRC close
 int    S_UTB_AtrLen   = 1;     // UT Bot ATR length
 double S_UTB_Coef     = 2.0;   // UT Bot ATR multiplier (sensitivity)
 int    S_SwingLook    = 10;    // Swing-based SL lookback (bars)
+// --- 2MACDSTO ---
+int    S_StoLevel     = 30;    // Stochastic threshold (buy < level, sell > 100-level)
+// --- NWE (Nadaraya-Watson Envelope) ---
+int    S_NWE_Window   = 100;   // bars in the kernel window
+double S_NWE_Band     = 8.0;   // Gaussian bandwidth (smoothness)
+double S_NWE_Mult     = 3.0;   // envelope width = mult * mean abs deviation
+// --- Regime (Auto mode) ---
+int    S_AdxTrend     = 25;    // ADX >= this => trending (use trend strategy)
 // --- shared risk shaping ---
 double S_TPCoef       = 1.5;   // TP = entry +/- TPCoef * |entry-SL|
 int    S_SLDevPts     = 50;    // extra buffer (points) added beyond the raw stop
@@ -68,6 +78,10 @@ int    h_atr     = INVALID_HANDLE;   // Chandelier ATR
 int    h_bands   = INVALID_HANDLE;
 int    h_rsi     = INVALID_HANDLE;
 int    h_atr_utb = INVALID_HANDLE;   // UT Bot ATR
+int    h_macd_f  = INVALID_HANDLE;   // fast MACD (2MACDSTO)
+int    h_macd_s  = INVALID_HANDLE;   // slow MACD (2MACDSTO)
+int    h_stoch   = INVALID_HANDLE;   // Stochastic (2MACDSTO)
+int    h_adx     = INVALID_HANDLE;   // ADX (regime / Auto mode)
 
 //+------------------------------------------------------------------+
 //| Push the EA's input values into this module.                     |
@@ -93,6 +107,19 @@ void StratConfigure(int ceAtrPeriod, double ceMult, int zlPeriod,
 }
 
 //+------------------------------------------------------------------+
+//| Extra config for the newer strategies + Auto-mode regime filter. |
+//+------------------------------------------------------------------+
+void StratConfigureExtra(int stoLevel, int nweWindow, double nweBand,
+                         double nweMult, int adxTrend)
+{
+   S_StoLevel   = stoLevel;
+   S_NWE_Window = nweWindow;
+   S_NWE_Band   = nweBand;
+   S_NWE_Mult   = nweMult;
+   S_AdxTrend   = adxTrend;
+}
+
+//+------------------------------------------------------------------+
 //| Create indicator handles. Call from OnInit.                      |
 //+------------------------------------------------------------------+
 bool StratInit(const string symbol, const ENUM_TIMEFRAMES tf)
@@ -106,9 +133,15 @@ bool StratInit(const string symbol, const ENUM_TIMEFRAMES tf)
    h_bands   = iBands(symbol, tf, S_BB_Period, 0, S_BB_Dev, PRICE_CLOSE);
    h_rsi     = iRSI(symbol, tf, S_RSI_Period, PRICE_CLOSE);
    h_atr_utb = iATR(symbol, tf, S_UTB_AtrLen);
+   h_macd_f  = iMACD(symbol, tf, 12, 26, 9, PRICE_CLOSE);
+   h_macd_s  = iMACD(symbol, tf, 24, 52, 9, PRICE_CLOSE);
+   h_stoch   = iStochastic(symbol, tf, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
+   h_adx     = iADX(symbol, tf, 14);
 
    if(h_atr == INVALID_HANDLE || h_bands == INVALID_HANDLE ||
-      h_rsi == INVALID_HANDLE || h_atr_utb == INVALID_HANDLE)
+      h_rsi == INVALID_HANDLE || h_atr_utb == INVALID_HANDLE ||
+      h_macd_f == INVALID_HANDLE || h_macd_s == INVALID_HANDLE ||
+      h_stoch == INVALID_HANDLE || h_adx == INVALID_HANDLE)
    {
       Print("StratInit ERROR: failed to create one or more indicator handles.");
       return(false);
@@ -125,6 +158,10 @@ void StratDeinit()
    if(h_bands   != INVALID_HANDLE) IndicatorRelease(h_bands);
    if(h_rsi     != INVALID_HANDLE) IndicatorRelease(h_rsi);
    if(h_atr_utb != INVALID_HANDLE) IndicatorRelease(h_atr_utb);
+   if(h_macd_f  != INVALID_HANDLE) IndicatorRelease(h_macd_f);
+   if(h_macd_s  != INVALID_HANDLE) IndicatorRelease(h_macd_s);
+   if(h_stoch   != INVALID_HANDLE) IndicatorRelease(h_stoch);
+   if(h_adx     != INVALID_HANDLE) IndicatorRelease(h_adx);
 }
 
 //==================================================================
@@ -452,6 +489,186 @@ SignalResult Signal_LRCUTB()
 }
 
 //==================================================================
+//  2MACDSTO  (two MACDs + Stochastic) -- momentum
+//==================================================================
+
+//+------------------------------------------------------------------+
+//| BUY  : both MACD lines above their signal (bullish) AND          |
+//|        Stochastic oversold (< level) -> momentum turning up.     |
+//| SELL : both MACD bearish AND Stochastic overbought (>100-level). |
+//| SL from the recent swing.                                        |
+//+------------------------------------------------------------------+
+SignalResult Signal_2MACDSTO()
+{
+   SignalResult r; r.sig = SIG_NONE; r.sl = 0; r.tp = 0;
+
+   double mf[], sf[], ms[], ss[], sto[];
+   ArraySetAsSeries(mf, true); ArraySetAsSeries(sf, true);
+   ArraySetAsSeries(ms, true); ArraySetAsSeries(ss, true);
+   ArraySetAsSeries(sto, true);
+   // MACD buffers: 0 = main, 1 = signal.
+   if(CopyBuffer(h_macd_f, 0, 0, 3, mf) < 3) return(r);
+   if(CopyBuffer(h_macd_f, 1, 0, 3, sf) < 3) return(r);
+   if(CopyBuffer(h_macd_s, 0, 0, 3, ms) < 3) return(r);
+   if(CopyBuffer(h_macd_s, 1, 0, 3, ss) < 3) return(r);
+   if(CopyBuffer(h_stoch,  0, 0, 3, sto) < 3) return(r); // main line
+
+   bool bullish = (mf[1] > sf[1]) && (ms[1] > ss[1]);
+   bool bearish = (mf[1] < sf[1]) && (ms[1] < ss[1]);
+
+   if(bullish && sto[1] < S_StoLevel)
+   {
+      r.sig = SIG_BUY;
+      r.sl  = SwingSL(true);
+   }
+   else if(bearish && sto[1] > (100 - S_StoLevel))
+   {
+      r.sig = SIG_SELL;
+      r.sl  = SwingSL(false);
+   }
+   return(r);
+}
+
+//==================================================================
+//  NWE  (Nadaraya-Watson Envelope) -- mean reversion
+//  Adapted from NWERSIASF: kernel-smoothed price + RSI filter.
+//==================================================================
+
+//+------------------------------------------------------------------+
+//| Nadaraya-Watson estimate at `shift` using a Gaussian kernel over |
+//| S_NWE_Window bars, and the mean absolute deviation (band width). |
+//+------------------------------------------------------------------+
+bool NWEstimate(const int shift, double &nwOut, double &maeOut)
+{
+   int w = S_NWE_Window;
+   double close[];
+   ArraySetAsSeries(close, true);
+   if(CopyClose(S_Symbol, S_TF, 0, shift + w + 1, close) < shift + w) return(false);
+
+   double sumW = 0.0, sumWC = 0.0;
+   for(int k = 0; k < w; k++)
+   {
+      double weight = MathExp(-(double)(k * k) / (2.0 * S_NWE_Band * S_NWE_Band));
+      sumW  += weight;
+      sumWC += weight * close[shift + k];
+   }
+   if(sumW <= 0.0) return(false);
+   double nw = sumWC / sumW;
+
+   double madSum = 0.0;
+   for(int k = 0; k < w; k++)
+      madSum += MathAbs(close[shift + k] - nw);
+   double mae = (madSum / w) * S_NWE_Mult;
+
+   nwOut  = nw;
+   maeOut = mae;
+   return(true);
+}
+
+//+------------------------------------------------------------------+
+//| BUY  : close closes back inside from below the lower band AND    |
+//|        RSI oversold. SELL : symmetric at the upper band.         |
+//+------------------------------------------------------------------+
+SignalResult Signal_NWE()
+{
+   SignalResult r; r.sig = SIG_NONE; r.sl = 0; r.tp = 0;
+
+   double nw, mae;
+   if(!NWEstimate(1, nw, mae)) return(r);
+   double upper = nw + mae;
+   double lower = nw - mae;
+
+   double rsi[], close[];
+   ArraySetAsSeries(rsi, true); ArraySetAsSeries(close, true);
+   if(CopyBuffer(h_rsi, 0, 0, 3, rsi) < 3) return(r);
+   if(CopyClose(S_Symbol, S_TF, 0, 3, close) < 3) return(r);
+
+   double dev = S_SLDevPts * S_Point;
+
+   // Reversion long: previous bar dipped below lower band, RSI oversold.
+   if(close[2] < lower && close[1] > close[2] && rsi[1] < 40)
+   {
+      r.sig = SIG_BUY;
+      r.sl  = lower - dev;
+   }
+   else if(close[2] > upper && close[1] < close[2] && rsi[1] > 60)
+   {
+      r.sig = SIG_SELL;
+      r.sl  = upper + dev;
+   }
+   return(r);
+}
+
+//==================================================================
+//  Regime / Hybrid / Auto  (selection modes)
+//==================================================================
+
+//+------------------------------------------------------------------+
+//| Is the market trending? (ADX main >= threshold on last bar.)     |
+//+------------------------------------------------------------------+
+bool RegimeIsTrending()
+{
+   double adx[];
+   ArraySetAsSeries(adx, true);
+   if(CopyBuffer(h_adx, 0, 0, 3, adx) < 3) return(false); // buffer 0 = ADX main
+   return(adx[1] >= S_AdxTrend);
+}
+
+//+------------------------------------------------------------------+
+//| AUTO: route to a trend strategy when trending, else a            |
+//| mean-reversion strategy. Picks the signal from the chosen one.   |
+//+------------------------------------------------------------------+
+SignalResult Signal_Auto()
+{
+   if(RegimeIsTrending())
+      return(Signal_CEZLSMA());   // trend regime -> trend follower
+   return(Signal_BBRSI());        // range regime -> mean reversion
+}
+
+//+------------------------------------------------------------------+
+//| HYBRID (confluence): poll all base strategies; act only when at  |
+//| least `minAgree` agree on the SAME direction. SL = the most      |
+//| conservative (nearest-to-price) among the agreeing ones.         |
+//+------------------------------------------------------------------+
+SignalResult Signal_Hybrid(const int minAgree)
+{
+   SignalResult r; r.sig = SIG_NONE; r.sl = 0; r.tp = 0;
+
+   SignalResult all[5];
+   all[0] = Signal_CEZLSMA();
+   all[1] = Signal_BBRSI();
+   all[2] = Signal_LRCUTB();
+   all[3] = Signal_2MACDSTO();
+   all[4] = Signal_NWE();
+
+   int buys = 0, sells = 0;
+   double buySL = 0.0, sellSL = 0.0;   // most conservative (highest buy SL / lowest sell SL)
+   for(int i = 0; i < 5; i++)
+   {
+      if(all[i].sig == SIG_BUY)
+      {
+         buys++;
+         if(all[i].sl > 0 && (buySL == 0.0 || all[i].sl > buySL)) buySL = all[i].sl;
+      }
+      else if(all[i].sig == SIG_SELL)
+      {
+         sells++;
+         if(all[i].sl > 0 && (sellSL == 0.0 || all[i].sl < sellSL)) sellSL = all[i].sl;
+      }
+   }
+
+   if(buys >= minAgree && buys > sells)
+   {
+      r.sig = SIG_BUY;  r.sl = buySL;
+   }
+   else if(sells >= minAgree && sells > buys)
+   {
+      r.sig = SIG_SELL; r.sl = sellSL;
+   }
+   return(r);
+}
+
+//==================================================================
 //  Dispatcher
 //==================================================================
 
@@ -476,10 +693,12 @@ SignalResult GetStrategySignal(const ENUM_STRATEGY strat)
    SignalResult r; r.sig = SIG_NONE; r.sl = 0; r.tp = 0;
    switch(strat)
    {
-      case STRAT_CEZLSMA: return(Signal_CEZLSMA());
-      case STRAT_BBRSI:   return(Signal_BBRSI());
-      case STRAT_LRCUTB:  return(Signal_LRCUTB());
-      default:            return(r);
+      case STRAT_CEZLSMA:  return(Signal_CEZLSMA());
+      case STRAT_BBRSI:    return(Signal_BBRSI());
+      case STRAT_LRCUTB:   return(Signal_LRCUTB());
+      case STRAT_2MACDSTO: return(Signal_2MACDSTO());
+      case STRAT_NWE:      return(Signal_NWE());
+      default:             return(r);
    }
 }
 //+------------------------------------------------------------------+
