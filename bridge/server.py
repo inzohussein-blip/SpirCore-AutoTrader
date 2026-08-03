@@ -54,6 +54,18 @@ async def _management_loop():
         await asyncio.sleep(interval)
 
 
+async def _watchdog_loop():
+    """Keep the MT5 link alive; reconnect if it drops."""
+    while True:
+        await asyncio.sleep(10.0)
+        try:
+            up = await asyncio.to_thread(mt5_client.ensure_connected)
+            if not up:
+                notify_bg("⚠️ MT5 link is down (reconnect attempt failed)")
+        except Exception as exc:
+            print(f"[watchdog] error: {exc}")
+
+
 def notify_bg(text: str) -> None:
     """Fire a notification without blocking the event loop or the caller."""
     if notify.enabled():
@@ -99,7 +111,8 @@ async def lifespan(app: FastAPI):
     print(f"[bridge] MT5 connected | symbol={settings.symbol} | "
           f"listening on {settings.host}:{settings.port}")
     tasks = [asyncio.create_task(_management_loop()),
-             asyncio.create_task(_journal_watch_loop())]
+             asyncio.create_task(_journal_watch_loop()),
+             asyncio.create_task(_watchdog_loop())]
     if notify.enabled():
         notify_bg("SpirCore bridge started.")
     try:

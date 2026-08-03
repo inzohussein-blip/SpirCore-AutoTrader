@@ -66,6 +66,12 @@ class Settings:
     # Risk guard (mirrors the EA): 0 disables the check.
     max_daily_loss_pct: float = _get_float("MAX_DAILY_LOSS_PCT", 5.0)
     max_trades_per_day: int = _get_int("MAX_TRADES_PER_DAY", 10)
+    # Total exposure cap across all EA positions (0 = unlimited).
+    max_total_lots: float = _get_float("MAX_TOTAL_LOTS", 0.0)
+    # Trading-session filter (kill-switch by hour, local time). Disabled by default.
+    use_session_filter: bool = _get("USE_SESSION_FILTER", "false").lower() == "true"
+    session_start_hour: int = _get_int("SESSION_START_HOUR", 0)
+    session_end_hour: int = _get_int("SESSION_END_HOUR", 24)
 
     # --- Position management (mirrors the EA) ---
     use_break_even: bool = _get("USE_BREAK_EVEN", "true").lower() == "true"

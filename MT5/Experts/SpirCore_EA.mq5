@@ -69,6 +69,12 @@ input bool     InpUseRiskSizing = false;      // Size lot from risk % (needs a s
 input double   InpRiskPercent   = 1.0;        // Risk % of balance per trade
 input double   InpMaxDailyLoss  = 5.0;        // Halt auto-trading after this daily loss % (0=off)
 input int      InpMaxTradesDay  = 10;         // Max auto trades per day (0=unlimited)
+input double   InpMaxTotalLots  = 0.0;        // Max total open lots across positions (0=off)
+
+input group    "=== Session Filter / فلتر الجلسة (kill-switch) ==="
+input bool     InpUseSession    = false;      // Restrict auto-trading to session hours
+input int      InpSessionStart  = 0;          // Session start hour (server time, 0-23)
+input int      InpSessionEnd    = 24;         // Session end hour (server time, 1-24)
 
 input group    "=== Strategy Engine / محرك الاستراتيجيات ==="
 input ENUM_STRATEGY InpStrategy      = STRAT_CEZLSMA; // Auto strategy (None = manual only)
@@ -557,6 +563,13 @@ void EvaluateStrategyOnNewBar()
    if(CountOwnPositions() >= InpMaxPositions)
       return;                 // respect the position cap
 
+   // SESSION KILL-SWITCH: block auto entries outside the allowed hours.
+   if(!SessionOK())
+   {
+      ShowTouchBanner("SESSION BLOCK: outside trading hours");
+      return;
+   }
+
    // RISK GATE: hard daily-loss / trades-per-day limits block the auto path.
    string blockReason;
    if(!RiskGuardOK(blockReason))
@@ -577,7 +590,44 @@ void EvaluateStrategyOnNewBar()
    // Risk-% position sizing (needs a valid strategy SL); else fixed lot.
    double lot = RiskCalcLot(entry, r.sl, InpFixedLot);
 
+   // EXPOSURE CAP: block if this trade would exceed the total-lots limit.
+   if(InpMaxTotalLots > 0.0 && TotalOwnLots() + lot > InpMaxTotalLots)
+   {
+      ShowTouchBanner(StringFormat("EXPOSURE BLOCK: total lots > %.2f", InpMaxTotalLots));
+      return;
+   }
+
    OpenTradeECN(ot, "auto-" + label, useSL, useTP, lot);
+}
+
+//+------------------------------------------------------------------+
+//| Is trading allowed now? (session-hours kill-switch, server time) |
+//+------------------------------------------------------------------+
+bool SessionOK()
+{
+   if(!InpUseSession)
+      return(true);
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int h = dt.hour;
+   int a = InpSessionStart, b = InpSessionEnd;
+   return((a <= b) ? (h >= a && h < b) : (h >= a || h < b)); // b<a wraps midnight
+}
+
+//+------------------------------------------------------------------+
+//| Sum of this EA's open lots on the symbol.                        |
+//+------------------------------------------------------------------+
+double TotalOwnLots()
+{
+   double total = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(PositionGetTicket(i) == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic)  continue;
+      total += PositionGetDouble(POSITION_VOLUME);
+   }
+   return(total);
 }
 
 //+------------------------------------------------------------------+
