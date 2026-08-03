@@ -23,6 +23,8 @@ jobs:
         run: python bridge/analyze.py bridge/tests/sample_journal.csv
       - name: Backtester smoke test (all 5 strategies)
         run: python bridge/backtest.py bridge/tests/sample_bars.csv
+      - name: Unit tests (stdlib unittest, no deps)
+        run: python -m unittest discover -s bridge/tests -p 'test_*.py' -v
 
   javascript:
     name: Extension (JS)

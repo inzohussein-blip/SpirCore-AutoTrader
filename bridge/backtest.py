@@ -567,6 +567,48 @@ def print_ranking(rows: list):
     print("else is noise. A backtest is a filter, not a promise.")
 
 
+# ===========================================================================
+#  Walk-forward analysis (out-of-sample validation)
+# ===========================================================================
+def slice_bars(bars: Bars, a: int, b: int) -> Bars:
+    return Bars(bars.label, bars.time[a:b], bars.open[a:b], bars.high[a:b],
+                bars.low[a:b], bars.close[a:b])
+
+
+def walkforward(bars: Bars, name: str, base: Params, splits: int, min_trades: int) -> Stats:
+    """Rolling walk-forward: optimize on each in-sample block, then trade the
+    winning params on the NEXT (unseen) block. Returns combined OUT-OF-SAMPLE
+    stats -- the honest measure of whether an edge survives out of sample."""
+    n = len(bars)
+    seg = n // (splits + 1)
+    if seg < 30:
+        return stats_from_pnls([])   # not enough data to be meaningful
+
+    oos_pnls = []
+    for i in range(splits):
+        train = slice_bars(bars, i * seg, (i + 1) * seg)
+        test = slice_bars(bars, (i + 1) * seg, (i + 2) * seg)
+        best = optimize_strategy(train, name, base, max(3, min_trades // (splits + 1)))
+        params = replace(base, **best[0]) if best else base
+        oos_pnls.extend(simulate(test, STRATEGIES[name](test, params), params))
+    return stats_from_pnls(oos_pnls)
+
+
+def print_walkforward(datasets: list, base: Params, splits: int, min_trades: int):
+    for bars in datasets:
+        print("=" * 74)
+        print(f"WALK-FORWARD  {bars.label}   ({splits} folds, out-of-sample)")
+        print("-" * 74)
+        print(f"{'Strategy':<10}{'OOS PF':>8}{'Trades':>8}{'Net':>12}{'MaxDD':>12}")
+        for name in STRATEGIES:
+            st = walkforward(bars, name, base, splits, min_trades)
+            pf = "inf" if st.profit_factor == float("inf") else f"{st.profit_factor:.2f}"
+            print(f"{name:<10}{pf:>8}{st.trades:>8}{st.net:>12.2f}{st.max_drawdown:>12.2f}")
+    print("=" * 74)
+    print("Out-of-sample PF is what matters. If it collapses vs in-sample")
+    print("optimization, the edge was overfitting -- do not trade it.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="SpirCore strategy backtester")
     ap.add_argument("csv", nargs="*", help="CSV file(s): time,open,high,low,close")
@@ -583,6 +625,9 @@ def main() -> int:
     ap.add_argument("--nwe-mult", type=float, default=3.0)
     ap.add_argument("--optimize", action="store_true",
                     help="sweep a parameter grid per strategy and print the best combo")
+    ap.add_argument("--walkforward", action="store_true",
+                    help="rolling optimize-then-test out-of-sample (overfitting check)")
+    ap.add_argument("--wf-splits", type=int, default=4, help="walk-forward folds")
     ap.add_argument("--min-trades", type=int, default=30,
                     help="minimum trades for an optimize combo to qualify")
     ap.add_argument("--detail", action="store_true", help="print a full report per row")
@@ -602,6 +647,10 @@ def main() -> int:
     if not datasets:
         ap.print_help()
         return 1
+
+    if args.walkforward:
+        print_walkforward(datasets, p, args.wf_splits, args.min_trades)
+        return 0
 
     if args.optimize:
         print_optimization(datasets, p, args.min_trades)

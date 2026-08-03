@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from dotenv import load_dotenv
 
-load_dotenv()  # load a local .env if present (never commit real secrets)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # load a local .env if present (never commit real secrets)
+except ImportError:
+    # python-dotenv is optional; without it we simply read os.environ directly.
+    # This keeps config importable with the standard library alone (e.g. tests/CI).
+    pass
 
 
 def _get(name: str, default: str = "") -> str:
