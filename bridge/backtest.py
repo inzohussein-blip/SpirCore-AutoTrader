@@ -180,6 +180,62 @@ def sma_series(vals, length):
     return out
 
 
+def ema_series(vals, period):
+    n = len(vals)
+    out = [None] * n
+    if n == 0:
+        return out
+    k = 2.0 / (period + 1)
+    out[0] = vals[0]
+    for i in range(1, n):
+        out[i] = vals[i] * k + out[i - 1] * (1 - k)
+    return out
+
+
+def macd_series(closes, fast, slow, signal):
+    """Return (macd_main, macd_signal) series."""
+    ef = ema_series(closes, fast)
+    es = ema_series(closes, slow)
+    main = [ef[i] - es[i] for i in range(len(closes))]
+    sig = ema_series(main, signal)
+    return main, sig
+
+
+def stochastic_main(highs, lows, closes, kperiod, slowing):
+    """Slowed %K (the 'main' line), aligned to bars."""
+    n = len(closes)
+    raw = [None] * n
+    for i in range(kperiod - 1, n):
+        hh = max(highs[i - kperiod + 1:i + 1])
+        ll = min(lows[i - kperiod + 1:i + 1])
+        rng = hh - ll
+        raw[i] = 50.0 if rng == 0 else 100.0 * (closes[i] - ll) / rng
+    # slowing = SMA of raw %K
+    out = [None] * n
+    for i in range(n):
+        seg = raw[max(0, i - slowing + 1):i + 1]
+        if any(v is None for v in seg) or len(seg) < slowing:
+            continue
+        out[i] = sum(seg) / slowing
+    return out
+
+
+def nw_estimate(closes, i, window, band, mult):
+    """Nadaraya-Watson value + envelope half-width (mean abs dev * mult) at bar i."""
+    if i - window + 1 < 0:
+        return None
+    sw = swc = 0.0
+    for k in range(window):
+        w = 2.718281828 ** (-(k * k) / (2.0 * band * band))
+        sw += w
+        swc += w * closes[i - k]
+    if sw <= 0:
+        return None
+    nw = swc / sw
+    mad = sum(abs(closes[i - k] - nw) for k in range(window)) / window
+    return nw, mad * mult
+
+
 # ===========================================================================
 #  Strategy signal precomputation -> list of (dir, sl_price) per bar or None
 # ===========================================================================
@@ -203,6 +259,12 @@ class Params:
     utb_atr: int = 1
     utb_coef: float = 2.0
     swing_look: int = 10
+    # 2MACDSTO
+    sto_level: int = 30
+    # NWE
+    nwe_window: int = 100
+    nwe_band: float = 8.0
+    nwe_mult: float = 3.0
 
 
 def chandelier(bars: Bars, p: Params):
@@ -313,10 +375,56 @@ def signals_lrcutb(bars: Bars, p: Params):
     return out
 
 
+def _swing_sl(bars: Bars, i: int, is_buy: bool, look: int, dev: float):
+    if is_buy:
+        return min(bars.low[max(0, i - look + 1):i + 1]) - dev
+    return max(bars.high[max(0, i - look + 1):i + 1]) + dev
+
+
+def signals_2macdsto(bars: Bars, p: Params):
+    n = len(bars)
+    mf_main, mf_sig = macd_series(bars.close, 12, 26, 9)
+    ms_main, ms_sig = macd_series(bars.close, 24, 52, 9)
+    sto = stochastic_main(bars.high, bars.low, bars.close, 14, 3)
+    dev = p.sl_dev_pts * p.point
+    out = [None] * n
+    for i in range(1, n):
+        if sto[i] is None:
+            continue
+        bullish = mf_main[i] > mf_sig[i] and ms_main[i] > ms_sig[i]
+        bearish = mf_main[i] < mf_sig[i] and ms_main[i] < ms_sig[i]
+        if bullish and sto[i] < p.sto_level:
+            out[i] = (1, _swing_sl(bars, i, True, p.swing_look, dev))
+        elif bearish and sto[i] > (100 - p.sto_level):
+            out[i] = (-1, _swing_sl(bars, i, False, p.swing_look, dev))
+    return out
+
+
+def signals_nwe(bars: Bars, p: Params):
+    n = len(bars)
+    rsi = rsi_wilder(bars.close, p.rsi_len)
+    dev = p.sl_dev_pts * p.point
+    out = [None] * n
+    for i in range(2, n):
+        est = nw_estimate(bars.close, i, p.nwe_window, p.nwe_band, p.nwe_mult)
+        if est is None or rsi[i] is None:
+            continue
+        nw, mae = est
+        upper, lower = nw + mae, nw - mae
+        c, cp = bars.close[i], bars.close[i - 1]
+        if cp < lower and c > cp and rsi[i] < 40:
+            out[i] = (1, lower - dev)
+        elif cp > upper and c < cp and rsi[i] > 60:
+            out[i] = (-1, upper + dev)
+    return out
+
+
 STRATEGIES = {
     "CEZLSMA": signals_cezlsma,
     "BBRSI": signals_bbrsi,
     "LRCUTB": signals_lrcutb,
+    "2MACDSTO": signals_2macdsto,
+    "NWE": signals_nwe,
 }
 
 
@@ -415,10 +523,16 @@ def main() -> int:
     ap.add_argument("--point", type=float, default=0.01)
     ap.add_argument("--spread-pts", type=int, default=20)
     ap.add_argument("--tp-coef", type=float, default=1.5)
+    ap.add_argument("--sto-level", type=int, default=30, help="2MACDSTO Stochastic threshold")
+    ap.add_argument("--nwe-window", type=int, default=100)
+    ap.add_argument("--nwe-band", type=float, default=8.0)
+    ap.add_argument("--nwe-mult", type=float, default=3.0)
     ap.add_argument("--detail", action="store_true", help="print a full report per row")
     args = ap.parse_args()
 
-    p = Params(point=args.point, spread_pts=args.spread_pts, tp_coef=args.tp_coef)
+    p = Params(point=args.point, spread_pts=args.spread_pts, tp_coef=args.tp_coef,
+               sto_level=args.sto_level, nwe_window=args.nwe_window,
+               nwe_band=args.nwe_band, nwe_mult=args.nwe_mult)
 
     datasets = []
     if args.mt5:

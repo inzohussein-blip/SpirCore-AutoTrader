@@ -137,7 +137,9 @@ python backtest.py data_M5.csv data_M15.csv
 # أو مباشرة من MT5 (ويندوز + المنصة تعمل):
 python backtest.py --mt5 --symbol XAUUSD --timeframes M5,M15,H1 --bars 5000
 ```
-يطبع جدولاً مرتّباً (Trades / Win% / PF / Net / MaxDD) لكل استراتيجية × فريم. **الباك-تِست مرشِّح لا وعد** — أي نتيجة بأقل من 100 صفقة أو PF < 1.3 تُعتبر ضجيجاً، والنتيجة الجيدة تعني «تستحق اختبار Demo» فقط.
+يطبع جدولاً مرتّباً (Trades / Win% / PF / Net / MaxDD) لكل استراتيجية × فريم — **الخمس استراتيجيات جميعاً** (CEZLSMA / BBRSI / LRCUTB / 2MACDSTO / NWE). معاملات قابلة للضبط: `--sto-level`, `--nwe-window`, `--nwe-band`, `--nwe-mult`, `--spread-pts`, `--tp-coef`.
+
+**الباك-تِست مرشِّح لا وعد** — أي نتيجة بأقل من 100 صفقة أو PF < 1.3 تُعتبر ضجيجاً، والنتيجة الجيدة تعني «تستحق اختبار Demo» فقط.
 
 ### نقاط الاتصال (Endpoints)
 - `GET  /health` — فحص الحياة.
