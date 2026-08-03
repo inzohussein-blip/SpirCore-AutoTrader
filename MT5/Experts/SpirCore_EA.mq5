@@ -91,6 +91,14 @@ input int      InpUTB_AtrLen    = 1;          // UT Bot ATR length
 input double   InpUTB_Coef      = 2.0;        // UT Bot ATR multiplier
 input int      InpSwingLook     = 10;         // Swing SL lookback (bars)
 
+input group    "--- 2MACDSTO / NWE / Auto ---"
+input int      InpStoLevel      = 30;         // 2MACDSTO Stochastic threshold
+input int      InpNWEWindow     = 100;        // NWE kernel window (bars)
+input double   InpNWEBand       = 8.0;        // NWE Gaussian bandwidth
+input double   InpNWEMult       = 3.0;        // NWE envelope width multiplier
+input int      InpAdxTrend      = 25;         // Auto mode: ADX >= this => trending
+input int      InpHybridMinAgree = 2;         // Hybrid: min strategies agreeing to trade
+
 input group    "--- Strategy risk shaping ---"
 input double   InpTPCoef        = 1.5;        // TP = TPCoef x risk distance
 input int      InpStratSLDevPts = 50;         // Extra SL buffer beyond raw stop (points)
@@ -126,6 +134,11 @@ datetime       g_lastCmdRead   = 0;       // last time the commands file was rea
 long           g_lastCmdId     = 0;       // id of the last executed dashboard command
 ENUM_STRATEGY  g_activeStrategy;          // runtime strategy (dashboard can switch it)
 double         g_riskMaxDaily;            // runtime daily-loss limit (dashboard can change it)
+
+// Selection mode: SINGLE (one strategy) / HYBRID (confluence) / AUTO (regime).
+enum ENUM_SELMODE { SEL_SINGLE = 0, SEL_HYBRID = 1, SEL_AUTO = 2 };
+ENUM_SELMODE   g_selMode = SEL_SINGLE;
+datetime       g_lastStatusWrite = 0;
 
 // --- Object names (kept in one place for clean create/delete) -------
 #define OBJ_PREFIX     "SPIRCORE_"
@@ -168,12 +181,14 @@ int OnInit()
                   InpBB_Period, InpBB_Dev, InpRSI_Period,
                   InpLRC_Len, InpLRC_SmaLen, InpUTB_AtrLen, InpUTB_Coef,
                   InpSwingLook, InpTPCoef, InpStratSLDevPts);
+   StratConfigureExtra(InpStoLevel, InpNWEWindow, InpNWEBand, InpNWEMult, InpAdxTrend);
    if(!StratInit(InpSymbol, (ENUM_TIMEFRAMES)Period()))
    {
       Print("ERROR: strategy engine failed to initialize.");
       return(INIT_FAILED);
    }
    g_activeStrategy = InpStrategy;   // runtime strategy (dashboard-switchable)
+   g_selMode        = SEL_SINGLE;
 
    // --- Configure the risk-management gate --------------------------
    g_riskMaxDaily = InpMaxDailyLoss;
@@ -185,6 +200,7 @@ int OnInit()
    RecalcFutureLines(true);
    RefreshStatusLabel();
 
+   WriteStatus();
    ChartRedraw();
    Print("SpirCore_EA initialized on ", InpSymbol, " | Auto=", (g_autoOn ? "ON" : "OFF"));
    return(INIT_SUCCEEDED);
@@ -229,6 +245,13 @@ void OnTick()
 
    // 6) CONTROL LAYER: obey dashboard commands relayed by the bridge.
    ReadCommands();
+
+   // 7) STATUS: publish current state (auto/mode/strategy) for the dashboard.
+   if(TimeCurrent() - g_lastStatusWrite >= 3)
+   {
+      g_lastStatusWrite = TimeCurrent();
+      WriteStatus();
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -283,8 +306,18 @@ void ExecuteCommand(const string cmd, const string a1, const string a2)
    }
    else if(cmd == "STRATEGY")
    {
+      g_selMode = SEL_SINGLE;
       g_activeStrategy = StrategyFromName(a1);
       ShowTouchBanner("Strategy set to " + StrategyName(g_activeStrategy));
+      WriteStatus();
+   }
+   else if(cmd == "MODE")
+   {
+      if(a1 == "HYBRID")    g_selMode = SEL_HYBRID;
+      else if(a1 == "AUTO") g_selMode = SEL_AUTO;
+      else                  g_selMode = SEL_SINGLE;
+      ShowTouchBanner("Selection mode: " + SelModeName());
+      WriteStatus();
    }
    else if(cmd == "RISK" && a1 == "MAX_DAILY")
    {
@@ -311,9 +344,11 @@ void ExecuteCommand(const string cmd, const string a1, const string a2)
 //+------------------------------------------------------------------+
 ENUM_STRATEGY StrategyFromName(const string name)
 {
-   if(name == "CEZLSMA") return(STRAT_CEZLSMA);
-   if(name == "BBRSI")   return(STRAT_BBRSI);
-   if(name == "LRCUTB")  return(STRAT_LRCUTB);
+   if(name == "CEZLSMA")  return(STRAT_CEZLSMA);
+   if(name == "BBRSI")    return(STRAT_BBRSI);
+   if(name == "LRCUTB")   return(STRAT_LRCUTB);
+   if(name == "2MACDSTO") return(STRAT_2MACDSTO);
+   if(name == "NWE")      return(STRAT_NWE);
    return(STRAT_NONE);
 }
 
@@ -489,7 +524,8 @@ void ReadPythonLevels()
 //+------------------------------------------------------------------+
 void EvaluateStrategyOnNewBar()
 {
-   if(g_activeStrategy == STRAT_NONE)
+   // In SINGLE mode a NONE strategy means "do nothing"; HYBRID/AUTO always run.
+   if(g_selMode == SEL_SINGLE && g_activeStrategy == STRAT_NONE)
       return;
 
    datetime barTime = iTime(InpSymbol, PERIOD_CURRENT, 0);
@@ -497,15 +533,22 @@ void EvaluateStrategyOnNewBar()
       return;                 // still the same bar -> nothing new to decide
    g_lastSignalBar = barTime; // mark this bar handled (once)
 
-   SignalResult r = GetStrategySignal(g_activeStrategy);
+   // Pick the signal according to the selection mode.
+   SignalResult r;
+   if(g_selMode == SEL_HYBRID)      r = Signal_Hybrid(InpHybridMinAgree);
+   else if(g_selMode == SEL_AUTO)   r = Signal_Auto();
+   else                             r = GetStrategySignal(g_activeStrategy);
+
    if(r.sig == SIG_NONE)
       return;
+
+   string label = ActiveLabel();
 
    // Show the signal on the banner regardless of auto state, so the
    // trader can confirm manually when Auto is OFF.
    string dir = (r.sig == SIG_BUY) ? "BUY" : "SELL";
    ShowTouchBanner(StringFormat("SIGNAL: %s (%s)  -> %s",
-                    dir, StrategyName(g_activeStrategy),
+                    dir, label,
                     (g_autoOn ? "auto-executing" : "click BUY/SELL to confirm")));
 
    if(!g_autoOn)
@@ -534,7 +577,7 @@ void EvaluateStrategyOnNewBar()
    // Risk-% position sizing (needs a valid strategy SL); else fixed lot.
    double lot = RiskCalcLot(entry, r.sl, InpFixedLot);
 
-   OpenTradeECN(ot, "auto-" + StrategyName(g_activeStrategy), useSL, useTP, lot);
+   OpenTradeECN(ot, "auto-" + label, useSL, useTP, lot);
 }
 
 //+------------------------------------------------------------------+
@@ -544,11 +587,48 @@ string StrategyName(const ENUM_STRATEGY s)
 {
    switch(s)
    {
-      case STRAT_CEZLSMA: return("CEZLSMA");
-      case STRAT_BBRSI:   return("BBRSI");
-      case STRAT_LRCUTB:  return("LRCUTB");
-      default:            return("NONE");
+      case STRAT_CEZLSMA:  return("CEZLSMA");
+      case STRAT_BBRSI:    return("BBRSI");
+      case STRAT_LRCUTB:   return("LRCUTB");
+      case STRAT_2MACDSTO: return("2MACDSTO");
+      case STRAT_NWE:      return("NWE");
+      default:             return("NONE");
    }
+}
+
+//+------------------------------------------------------------------+
+//| Selection-mode name.                                             |
+//+------------------------------------------------------------------+
+string SelModeName()
+{
+   if(g_selMode == SEL_HYBRID) return("HYBRID");
+   if(g_selMode == SEL_AUTO)   return("AUTO");
+   return("SINGLE");
+}
+
+//+------------------------------------------------------------------+
+//| Label for the currently active selection (mode-aware).           |
+//+------------------------------------------------------------------+
+string ActiveLabel()
+{
+   if(g_selMode == SEL_HYBRID) return("HYBRID");
+   if(g_selMode == SEL_AUTO)   return("AUTO");
+   return(StrategyName(g_activeStrategy));
+}
+
+//+------------------------------------------------------------------+
+//| Write the EA's current state so the bridge/dashboard can show it.|
+//| One line: auto,mode,strategy  e.g.  ON,SINGLE,CEZLSMA           |
+//+------------------------------------------------------------------+
+void WriteStatus()
+{
+   int fh = FileOpen("spircore_status.csv", FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+      return;
+   FileWriteString(fh, StringFormat("%s,%s,%s\n",
+                   (g_autoOn ? "ON" : "OFF"), SelModeName(),
+                   StrategyName(g_activeStrategy)));
+   FileClose(fh);
 }
 
 //+------------------------------------------------------------------+

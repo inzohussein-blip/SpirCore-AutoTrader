@@ -89,10 +89,16 @@
         </div>
       </div>
       <div class="ctl">
-        <div class="k">Strategy (EA)</div>
+        <div class="k">Strategy / mode (EA) — <span id="eaActive" class="gold">—</span></div>
         <div class="row">
           <select id="strat">
-            <option>CEZLSMA</option><option>BBRSI</option><option>LRCUTB</option><option>NONE</option>
+            <optgroup label="Single">
+              <option>CEZLSMA</option><option>BBRSI</option><option>LRCUTB</option>
+              <option>2MACDSTO</option><option>NWE</option><option>NONE</option>
+            </optgroup>
+            <optgroup label="Combined">
+              <option>HYBRID</option><option>AUTO</option>
+            </optgroup>
           </select>
           <button class="b-gold" onclick="ctl('ea_strategy',{value:document.getElementById('strat').value})">Set</button>
         </div>
@@ -215,6 +221,12 @@ function render(s){
   $("spread").textContent = s.spread_points + "/" + s.max_spread_points;
   $("spread").className = "v " + (s.spread_points>s.max_spread_points?"neg":"gold");
   $("tradesToday").textContent = s.trades_today;
+
+  const ea = s.ea||{};
+  if(ea.mode){
+    const active = ea.mode==="SINGLE" ? (ea.strategy||"—") : ea.mode;
+    $("eaActive").textContent = `${active} · auto ${ea.auto||"?"}`;
+  }
 
   const body = $("posBody");
   const ps = s.positions||[];

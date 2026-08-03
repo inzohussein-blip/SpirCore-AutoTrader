@@ -160,6 +160,7 @@ def _snapshot() -> dict:
         "positions": mt5_client.positions_list(),
         "daily_pnl": mt5_client.daily_pnl(),
         "trades_today": mt5_client.trades_today(),
+        "ea": ea_commands.read_status(),
     }
 
 
@@ -188,7 +189,11 @@ async def control(ctl: Control):
     if a == "ea_auto":
         return ea_commands.write_command("AUTO", (ctl.value or "OFF").upper())
     if a == "ea_strategy":
-        return ea_commands.write_command("STRATEGY", (ctl.value or "").upper())
+        v = (ctl.value or "").upper()
+        # HYBRID / AUTO are selection modes; anything else is a single strategy.
+        if v in ("HYBRID", "AUTO"):
+            return ea_commands.write_command("MODE", v)
+        return ea_commands.write_command("STRATEGY", v)
     if a == "ea_risk_daily":
         return ea_commands.write_command("RISK", "MAX_DAILY", ctl.value or "0")
     if a in ("open_buy", "open_sell"):

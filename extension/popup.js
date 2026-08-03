@@ -104,5 +104,12 @@ $("dashboard").addEventListener("click", () => {
   const port = Number($("port").value) || 8000;
   chrome.tabs.create({ url: `http://${host}:${port}/dashboard` });
 });
+$("applyStrat").addEventListener("click", () => {
+  const value = $("strat").value;
+  chrome.runtime.sendMessage(
+    { type: "control", payload: { action: "ea_strategy", value } },
+    (res) => log(res ? `strategy ${value}: ${res.detail}` : "no response")
+  );
+});
 
 document.addEventListener("DOMContentLoaded", load);

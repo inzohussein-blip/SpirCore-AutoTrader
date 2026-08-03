@@ -83,6 +83,9 @@ class Settings:
     commands_file: str = _get("COMMANDS_FILE", "spircore_commands.csv")
     # Journal file the EA writes (for the dashboard to read stats from).
     journal_file: str = _get("JOURNAL_FILE", "spircore_journal.csv")
+    # Status file the EA writes (auto,mode,strategy) so the dashboard/extension
+    # reflect the EA's real state.
+    status_file: str = _get("STATUS_FILE", "spircore_status.csv")
 
 
 settings = Settings()

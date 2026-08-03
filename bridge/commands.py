@@ -25,7 +25,7 @@ import time
 from config import settings
 
 # Commands the EA understands (validated before writing).
-VALID = {"AUTO", "STRATEGY", "RISK", "CLOSE", "FLATTEN"}
+VALID = {"AUTO", "STRATEGY", "MODE", "RISK", "CLOSE", "FLATTEN"}
 
 
 def write_command(cmd: str, *args: str) -> dict:
@@ -44,3 +44,18 @@ def write_command(cmd: str, *args: str) -> dict:
         fh.write(line + "\n")
     os.replace(tmp, path)  # atomic overwrite
     return {"ok": True, "detail": f"queued: {line}", "id": cmd_id}
+
+
+def read_status() -> dict:
+    """Read the EA-published state file: 'auto,mode,strategy'."""
+    try:
+        with open(settings.status_file, encoding="utf-8") as fh:
+            line = fh.readline().strip()
+    except FileNotFoundError:
+        return {"auto": None, "mode": None, "strategy": None}
+    parts = line.split(",")
+    return {
+        "auto": parts[0] if len(parts) > 0 else None,
+        "mode": parts[1] if len(parts) > 1 else None,
+        "strategy": parts[2] if len(parts) > 2 else None,
+    }
