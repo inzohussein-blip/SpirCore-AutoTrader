@@ -119,10 +119,22 @@ python server.py              # أو: uvicorn server:app --host 127.0.0.1 --port
 ### الملفات
 | الملف | الوظيفة |
 |-------|---------|
-| `manifest.json` | تعريف الإضافة (MV3) وصلاحياتها على TradingView |
-| `background.js` | Service Worker: يدير اتصال WebSocket الدائم + إعادة اتصال تلقائية + keep-alive |
+| `manifest.json` | تعريف الإضافة (MV3) وصلاحياتها على TradingView + منصة MT5 Web |
+| `background.js` | Service Worker: توجيه الإشارات (bridge/web/auto) + WebSocket + إعادة اتصال + keep-alive |
 | `content.js` | يراقب سجل تنبيهات TradingView ويحوّل نصها إلى إشارات |
-| `popup.html/.css/.js` | واجهة إعدادات + أزرار يدوية (BUY/SELL/CLOSE) + مؤشر حالة الاتصال |
+| `mt5web.js` | **أتمتة منصة MT5 Web** مباشرةً (نقر Buy/Sell وضبط اللوت) — بدون تطبيق سطح المكتب |
+| `popup.html/.css/.js` | واجهة إعدادات + **اختيار وضع التنفيذ** + أزرار يدوية + مؤشر حالة |
+
+### 🔀 أوضاع التنفيذ (Execution Modes) — جديد
+الإضافة تدعم الآن مسارين للتنفيذ، تختار بينهما من نافذة الإضافة:
+| الوضع | الشرح | يحتاج تطبيق MT5؟ | يحتاج جسر Python؟ |
+|-------|-------|:---:|:---:|
+| **Bridge** | يرسل عبر WebSocket لجسر Python → تطبيق MT5 (سطح المكتب) | ✅ | ✅ |
+| **MT5 Web** | يؤتمت **منصة MT5 على الويب** مباشرةً داخل المتصفح (نقر الأزرار) | ❌ | ❌ |
+| **Auto** | يفضّل الجسر إن كان متصلاً، وإلا يسقط تلقائياً لوضع الويب | اختياري | اختياري |
+
+> **وضع MT5 Web** يعمل على `trade.mql5.com` و `web.metatrader5.com` وواجهات البروكرز البيضاء. افتح لوحة **One-Click Trading** في المنصة لأفضل موثوقية. محدّدات الـ DOM قابلة للتعديل في مكان واحد داخل `mt5web.js` (`SELECTORS`) لأنها تختلف بين الإصدارات والبروكرز.
+> للاختبار اليدوي من كونسول صفحة المنصة: `window.__spircoreWeb("buy", 0.10)`.
 
 ### قواعد نص التنبيه في TradingView
 اجعل نص التنبيه يبدأ بالكلمة `SPIRCORE` ثم الأمر:
@@ -137,23 +149,29 @@ SPIRCORE DRAW 3358.4 3341.1
 ### التركيب
 1. افتح كروم → `chrome://extensions` → فعّل **Developer mode**.
 2. اضغط **Load unpacked** → اختر مجلد `extension/`.
-3. افتح الإضافة من شريط الأدوات، وأدخل: **host** (127.0.0.1)، **port** (8000)، **Auth token** (نفس `BRIDGE_AUTH_TOKEN`)، **Symbol/Lot** ثم **Save & Connect**.
-4. عندما يعمل جسر Python سترى المؤشر **online** أخضر.
+3. افتح الإضافة من شريط الأدوات، واختر **Execution mode** (Auto / Bridge / MT5 Web)، وأدخل: **host** (127.0.0.1)، **port** (8000)، **Auth token** (نفس `BRIDGE_AUTH_TOKEN`)، **Symbol/Lot** ثم **Save & Connect**.
+4. **وضع Bridge/Auto**: عندما يعمل جسر Python سترى المؤشر **bridge on** أخضر.
+   **وضع MT5 Web**: افتح تبويب منصة MT5 على الويب (مثل `trade.mql5.com`) وسيظهر **web ready** أخضر.
 
 ---
 
 ## 🔄 التدفق الكامل للنظام / End-to-End Flow
 ```
 TradingView Alert ──► Chrome Extension (content.js)
-        │                     │ WebSocket
-        │                     ▼
-        │             Python Bridge (FastAPI /ws)
-        │                     │ MetaTrader5 lib
-        │                     ▼
-        │             MT5 Terminal ◄── SpirCore_EA (ECN exec + GUI + strategies)
-        │                     ▲ CSV levels
-        └── (or draw levels) ──┘
+                            │
+              ┌─────────────┴─────────────┐
+     Bridge mode                     MT5 Web mode
+              │ WebSocket                  │ UI automation (mt5web.js)
+              ▼                            ▼
+     Python Bridge (FastAPI /ws)     MT5 Web Terminal (browser)
+              │ MetaTrader5 lib            │  (no desktop app needed)
+              ▼                            ▼
+     MT5 Desktop ◄── SpirCore_EA     صفقة تُفتح مباشرة
+     (ECN exec + GUI + strategies)
+              ▲ CSV levels
+              └── (draw levels)
 ```
+> في وضع **Auto** يختار المسار تلقائياً: الجسر إن كان متاحاً، وإلا منصة الويب.
 
 ## ⚠️ إخلاء مسؤولية / Disclaimer
 هذا النظام لأغراض تعليمية وبحثية. التداول الآلي على الذهب عالي المخاطر. **اختبر دائماً على حساب تجريبي (Demo)** وراجع الكود قبل أي استخدام حقيقي.

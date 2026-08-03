@@ -13,6 +13,13 @@
   </header>
 
   <section class="config">
+    <label>Execution mode
+      <select id="mode">
+        <option value="auto">Auto (bridge, else web)</option>
+        <option value="bridge">Bridge only (desktop MT5)</option>
+        <option value="web">MT5 Web only (no app)</option>
+      </select>
+    </label>
     <label>Bridge host
       <input id="host" type="text" placeholder="127.0.0.1" />
     </label>
