@@ -153,6 +153,12 @@ python backtest.py data_M15.csv --optimize --min-trades 100
 ```
 > ⚠️ أفضل معاملات داخل العيّنة **نقطة بداية لا ضمان** — احذر الإفراط في التوفيق (Overfitting): تحقّق من الفائز على بيانات خارج العيّنة ثم Demo.
 
+**Walk-forward (تحقّق خارج العيّنة)** — الأهم لكشف الإفراط في التوفيق: يعاير على نافذة ويختبر على التالية غير المرئية، ويُخرج **Profit Factor خارج العيّنة**:
+```bash
+python backtest.py data_H1.csv --walkforward --wf-splits 4
+```
+> إن انهار الـ PS خارج العيّنة مقارنةً بالمعايرة داخل العيّنة، فالأفضلية كانت وهماً — لا تتداولها.
+
 **الباك-تِست مرشِّح لا وعد** — أي نتيجة بأقل من 100 صفقة أو PF < 1.3 تُعتبر ضجيجاً، والنتيجة الجيدة تعني «تستحق اختبار Demo» فقط.
 
 ### نقاط الاتصال (Endpoints)
@@ -281,7 +287,7 @@ TradingView Alert ──► Chrome Extension (content.js)
 
 ## 🧪 التكامل المستمر / CI
 كل Pull Request و push إلى `main` يشغّل تلقائياً (`.github/workflows/ci.yml`):
-- **Python**: `py_compile` لكل وحدات الجسر + اختبار دخان لـ `analyze.py` و`backtest.py` (بيانات في `bridge/tests/`).
+- **Python**: `py_compile` لكل وحدات الجسر + اختبار دخان لـ `analyze.py` و`backtest.py` + **اختبارات وحدة** (`python -m unittest discover -s bridge/tests`) تغطّي مقاييس الأداء، مؤشرات ومحرك الباك-تِست، وجسر الأوامر.
 - **JavaScript**: `node --check` لكل سكربتات الإضافة + التحقق من صحة `manifest.json`.
 
 > ملاحظة: `MetaTrader5` مكتبة ويندوز فقط، لذا لا تُثبَّت في CI؛ `py_compile` يتحقق من الصياغة دون استيراد، والأدوات المُختبَرة تعتمد المكتبة القياسية فقط.
