@@ -20,9 +20,10 @@
 ## الخطوة 1 — تركيب النواة (EA) في MT5
 1. في MT5 اضغط `F4` لفتح **MetaEditor**.
 2. في **Navigator** انقر يميناً على **Experts → Open Folder**.
-3. انسخ **الملفين** معاً إلى `MQL5/Experts/`:
+3. انسخ **الملفات الثلاثة** معاً إلى `MQL5/Experts/`:
    - `MT5/Experts/SpirCore_EA.mq5`
    - `MT5/Experts/SpirCore_Strategies.mqh`
+   - `MT5/Experts/SpirCore_Risk.mqh`
 4. في MetaEditor افتح `SpirCore_EA.mq5` واضغط **Compile** (`F7`). المطلوب: **0 errors**.
 5. في MT5 افتح شارت **XAUUSD** واسحب `SpirCore_EA` عليه.
 6. في الإعدادات:

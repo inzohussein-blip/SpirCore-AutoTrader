@@ -23,6 +23,7 @@
 #include <Trade\Trade.mqh>
 #include <Trade\SymbolInfo.mqh>
 #include "SpirCore_Strategies.mqh"
+#include "SpirCore_Risk.mqh"
 
 //====================================================================
 //  INPUTS / الإعدادات
@@ -58,6 +59,12 @@ input group    "=== Execution / التنفيذ ==="
 input int      InpSlippagePts   = 20;         // Max deviation/slippage in points
 input int      InpModifyRetries = 3;          // Retries for the ECN PositionModify step
 input int      InpMaxPositions  = 1;          // Max simultaneous EA positions on the symbol
+
+input group    "=== Risk Management / إدارة المخاطر ==="
+input bool     InpUseRiskSizing = false;      // Size lot from risk % (needs a strategy SL)
+input double   InpRiskPercent   = 1.0;        // Risk % of balance per trade
+input double   InpMaxDailyLoss  = 5.0;        // Halt auto-trading after this daily loss % (0=off)
+input int      InpMaxTradesDay  = 10;         // Max auto trades per day (0=unlimited)
 
 input group    "=== Strategy Engine / محرك الاستراتيجيات ==="
 input ENUM_STRATEGY InpStrategy      = STRAT_CEZLSMA; // Auto strategy (None = manual only)
@@ -142,6 +149,10 @@ int OnInit()
       Print("ERROR: strategy engine failed to initialize.");
       return(INIT_FAILED);
    }
+
+   // --- Configure the risk-management gate --------------------------
+   RiskConfigure(InpSymbol, InpMagic, InpUseRiskSizing, InpRiskPercent,
+                 InpMaxDailyLoss, InpMaxTradesDay);
 
    // --- Build UI + first line levels -------------------------------
    CreatePanel();
@@ -273,6 +284,15 @@ void EvaluateStrategyOnNewBar()
    if(CountOwnPositions() >= InpMaxPositions)
       return;                 // respect the position cap
 
+   // RISK GATE: hard daily-loss / trades-per-day limits block the auto path.
+   string blockReason;
+   if(!RiskGuardOK(blockReason))
+   {
+      ShowTouchBanner("RISK BLOCK: " + blockReason);
+      PrintFormat("Auto entry blocked by risk guard: %s", blockReason);
+      return;
+   }
+
    // Fill TP from the strategy's SL using the intended entry price.
    double entry = (r.sig == SIG_BUY) ? g_sym.Ask() : g_sym.Bid();
    BuildTP(r, entry);
@@ -280,7 +300,11 @@ void EvaluateStrategyOnNewBar()
    ENUM_ORDER_TYPE ot = (r.sig == SIG_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    double useSL = InpUseStratSLTP ? r.sl : 0.0;
    double useTP = InpUseStratSLTP ? r.tp : 0.0;
-   OpenTradeECN(ot, "auto-" + StrategyName(InpStrategy), useSL, useTP);
+
+   // Risk-% position sizing (needs a valid strategy SL); else fixed lot.
+   double lot = RiskCalcLot(entry, r.sl, InpFixedLot);
+
+   OpenTradeECN(ot, "auto-" + StrategyName(InpStrategy), useSL, useTP, lot);
 }
 
 //+------------------------------------------------------------------+
@@ -375,7 +399,8 @@ bool SpreadOK()
 //|   Step 2: immediate PositionModify to attach SL/TP brackets.     |
 //+------------------------------------------------------------------+
 bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag,
-                  const double slPrice = 0.0, const double tpPrice = 0.0)
+                  const double slPrice = 0.0, const double tpPrice = 0.0,
+                  const double lotOverride = 0.0)
 {
    // Spread filter guards the automatic path; manual clicks also respect it.
    if(!SpreadOK())
@@ -387,7 +412,7 @@ bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag,
    if(!g_sym.RefreshRates())
       return(false);
 
-   double lot = NormalizeLot(InpFixedLot);
+   double lot = NormalizeLot(lotOverride > 0.0 ? lotOverride : InpFixedLot);
    double price = (type == ORDER_TYPE_BUY) ? g_sym.Ask() : g_sym.Bid();
 
    // ----- STEP 1: bare market order (no SL/TP) -----------------------

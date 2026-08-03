@@ -58,6 +58,9 @@ class Settings:
     tp_points: int = _get_int("TP_POINTS", 600)            # fixed-points fallback TP
     modify_retries: int = _get_int("MODIFY_RETRIES", 3)
     max_positions: int = _get_int("MAX_POSITIONS", 1)
+    # Risk guard (mirrors the EA): 0 disables the check.
+    max_daily_loss_pct: float = _get_float("MAX_DAILY_LOSS_PCT", 5.0)
+    max_trades_per_day: int = _get_int("MAX_TRADES_PER_DAY", 10)
 
     # --- Chart-drawing bridge (Python -> EA) ---
     # File the EA polls to draw Python-pushed levels. Point this at the
