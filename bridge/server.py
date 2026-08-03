@@ -191,6 +191,18 @@ async def control(ctl: Control):
         return ea_commands.write_command("STRATEGY", (ctl.value or "").upper())
     if a == "ea_risk_daily":
         return ea_commands.write_command("RISK", "MAX_DAILY", ctl.value or "0")
+    if a in ("open_buy", "open_sell"):
+        return mt5_client.open_ecn(
+            action="buy" if a == "open_buy" else "sell",
+            lot=ctl.lot,
+            sl_price=ctl.sl or 0.0,
+            tp_price=ctl.tp or 0.0,
+            comment="dashboard-manual",
+        )
+    if a == "modify":
+        if ctl.ticket is None:
+            return {"ok": False, "detail": "ticket required"}
+        return mt5_client.modify_position(ctl.ticket, ctl.sl or 0.0, ctl.tp or 0.0)
     return {"ok": False, "detail": "unknown action"}
 
 

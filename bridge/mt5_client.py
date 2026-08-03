@@ -115,6 +115,29 @@ def positions_list(symbol: Optional[str] = None) -> list:
     return out
 
 
+def modify_position(ticket: int, sl: float, tp: float) -> dict:
+    """Set absolute SL/TP prices on one position (0 leaves that bracket off)."""
+    with _lock:
+        pos = mt5.positions_get(ticket=ticket)
+        if not pos:
+            return {"ok": False, "detail": "position not found"}
+        p = pos[0]
+        if p.magic != settings.magic:
+            return {"ok": False, "detail": "not an EA position"}
+        info = mt5.symbol_info(p.symbol)
+        digits = info.digits if info else 2
+        req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": p.symbol,
+            "position": p.ticket,
+            "sl": round(sl, digits) if sl and sl > 0 else 0.0,
+            "tp": round(tp, digits) if tp and tp > 0 else 0.0,
+        }
+        res = mt5.order_send(req)
+        ok = res is not None and res.retcode == mt5.TRADE_RETCODE_DONE
+        return {"ok": ok, "detail": "modified" if ok else f"retcode={getattr(res,'retcode',None)}"}
+
+
 def account_snapshot() -> dict:
     acc = mt5.account_info()
     return {

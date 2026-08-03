@@ -111,6 +111,18 @@
           <button class="b-red" onclick="confirmCtl('flatten',{},'FLATTEN: close everything AND stop the EA?')">FLATTEN</button>
         </div>
       </div>
+      <div class="ctl">
+        <div class="k">Manual order (ECN, spread-filtered)</div>
+        <div class="row">
+          <input id="mLot" type="number" step="0.01" style="width:70px" placeholder="lot" />
+          <input id="mSl" type="number" step="0.01" style="width:90px" placeholder="SL (opt)" />
+          <input id="mTp" type="number" step="0.01" style="width:90px" placeholder="TP (opt)" />
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="b-green" onclick="manualOrder('open_buy')">BUY</button>
+          <button class="b-red" onclick="manualOrder('open_sell')">SELL</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -173,6 +185,16 @@ async function ctl(action, extra){
 }
 function confirmCtl(action, extra, msg){ if(confirm(msg)) ctl(action, extra); }
 function closeTicket(t){ if(confirm("Close ticket "+t+"?")) ctl("close_ticket",{ticket:t}); }
+function modifyTicket(t){
+  const sl = parseFloat($("sl_"+t).value)||0, tp = parseFloat($("tp_"+t).value)||0;
+  ctl("modify",{ticket:t, sl, tp});
+}
+function manualOrder(action){
+  const lot = parseFloat($("mLot").value)||undefined;
+  const sl = parseFloat($("mSl").value)||0, tp = parseFloat($("mTp").value)||0;
+  const side = action==="open_buy"?"BUY":"SELL";
+  if(confirm(`${side} ${lot?("lot "+lot):"(default lot)"}?`)) ctl(action,{lot, sl, tp});
+}
 
 // ---- Live snapshot via WebSocket ----
 function connect(){
@@ -200,9 +222,12 @@ function render(s){
   else{
     body.innerHTML = ps.map(p =>
       `<tr><td>${p.ticket}</td><td>${p.type}</td><td>${p.volume}</td>`+
-      `<td>${money(p.price_open)}</td><td>${money(p.sl)}</td><td>${money(p.tp)}</td>`+
+      `<td>${money(p.price_open)}</td>`+
+      `<td><input id="sl_${p.ticket}" type="number" step="0.01" value="${p.sl||''}" style="width:80px"/></td>`+
+      `<td><input id="tp_${p.ticket}" type="number" step="0.01" value="${p.tp||''}" style="width:80px"/></td>`+
       `<td class="${cls(p.profit)}">${money(p.profit)}</td>`+
-      `<td><button class="b-red" onclick="closeTicket(${p.ticket})">Close</button></td></tr>`
+      `<td class="row"><button class="b-gold" onclick="modifyTicket(${p.ticket})">Save</button>`+
+      `<button class="b-red" onclick="closeTicket(${p.ticket})">Close</button></td></tr>`
     ).join("");
   }
 }
@@ -246,6 +271,18 @@ function drawCurve(curve){
     `<polyline points="${pts}" fill="none" stroke="${curve[curve.length-1]>=0?'#2e8b57':'#c0392b'}" stroke-width="2"/>`;
 }
 
+// ---- Persist a few UI preferences locally ----
+const PREF_KEYS = ["mLot","strat","riskDaily"];
+function restorePrefs(){
+  for(const k of PREF_KEYS){
+    const v = localStorage.getItem("spircore_"+k);
+    if(v!=null && $(k)) $(k).value = v;
+  }
+}
+function savePref(k){ const el=$(k); if(el) localStorage.setItem("spircore_"+k, el.value); }
+PREF_KEYS.forEach(k => { const el=$(k); if(el) el.addEventListener("change", ()=>savePref(k)); });
+
+restorePrefs();
 connect();
 loadStats();
 setInterval(loadStats, 10000);
