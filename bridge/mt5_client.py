@@ -95,6 +95,65 @@ def count_own_positions(symbol: Optional[str] = None) -> int:
     return sum(1 for p in positions if p.magic == settings.magic)
 
 
+def positions_list(symbol: Optional[str] = None) -> list:
+    """Open positions for this EA, as plain dicts for the dashboard."""
+    s = _sym(symbol)
+    out = []
+    for p in mt5.positions_get(symbol=s) or []:
+        if p.magic != settings.magic:
+            continue
+        out.append({
+            "ticket": p.ticket,
+            "type": "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell",
+            "volume": p.volume,
+            "price_open": p.price_open,
+            "sl": p.sl,
+            "tp": p.tp,
+            "profit": p.profit,
+            "swap": p.swap,
+        })
+    return out
+
+
+def account_snapshot() -> dict:
+    acc = mt5.account_info()
+    return {
+        "balance": acc.balance if acc else None,
+        "equity": acc.equity if acc else None,
+        "profit": acc.profit if acc else None,
+        "margin_free": acc.margin_free if acc else None,
+        "currency": acc.currency if acc else "",
+    }
+
+
+def close_ticket(ticket: int, symbol: Optional[str] = None) -> dict:
+    """Close a single position by ticket."""
+    s = _sym(symbol)
+    with _lock:
+        pos = mt5.positions_get(ticket=ticket)
+        if not pos:
+            return {"ok": False, "detail": "position not found"}
+        p = pos[0]
+        if p.magic != settings.magic:
+            return {"ok": False, "detail": "not an EA position"}
+        tick = mt5.symbol_info_tick(p.symbol)
+        is_buy = p.type == mt5.POSITION_TYPE_BUY
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": p.symbol,
+            "position": p.ticket,
+            "volume": p.volume,
+            "type": mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY,
+            "price": tick.bid if is_buy else tick.ask,
+            "deviation": settings.deviation_pts,
+            "magic": settings.magic,
+            "type_filling": _filling_mode(p.symbol),
+        }
+        res = mt5.order_send(req)
+        ok = res is not None and res.retcode == mt5.TRADE_RETCODE_DONE
+        return {"ok": ok, "detail": "closed" if ok else f"retcode={getattr(res,'retcode',None)}"}
+
+
 # ---------------------------------------------------------------------------
 # Risk guard (mirrors the EA: daily loss limit + trades/day cap)
 # ---------------------------------------------------------------------------

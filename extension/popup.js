@@ -99,5 +99,10 @@ $("mode").addEventListener("change", save);
 $("buy").addEventListener("click", () => send("buy"));
 $("sell").addEventListener("click", () => send("sell"));
 $("close").addEventListener("click", () => send("close"));
+$("dashboard").addEventListener("click", () => {
+  const host = $("host").value.trim() || "127.0.0.1";
+  const port = Number($("port").value) || 8000;
+  chrome.tabs.create({ url: `http://${host}:${port}/dashboard` });
+});
 
 document.addEventListener("DOMContentLoaded", load);

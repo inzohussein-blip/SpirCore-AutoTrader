@@ -37,3 +37,14 @@ class Result(BaseModel):
     detail: str = ""
     ticket: Optional[int] = None
     price: Optional[float] = None
+
+
+class Control(BaseModel):
+    """A control action from the dashboard (all require the auth token)."""
+    secret: str
+    action: Literal[
+        "close_all", "close_ticket", "flatten",
+        "ea_auto", "ea_strategy", "ea_risk_daily",
+    ]
+    ticket: Optional[int] = None      # for close_ticket
+    value: Optional[str] = None       # on/off, strategy name, or risk %
