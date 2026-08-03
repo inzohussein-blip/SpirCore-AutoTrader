@@ -29,7 +29,8 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from itertools import product
 
 from analyze import Stats, report, stats_from_pnls
 
@@ -494,6 +495,59 @@ def _pf(st: Stats) -> float:
     return st.profit_factor if st.gross_loss else 0.0  # inf -> treat as 0 for ranking realism
 
 
+# ===========================================================================
+#  Optimization (parameter sweep per strategy)
+# ===========================================================================
+# Small, sensible grids per strategy (plus a shared TP axis). Kept modest so
+# the pure-Python sweep stays quick.
+PARAM_GRIDS = {
+    "CEZLSMA":  {"ce_mult": [0.5, 0.75, 1.0, 1.5], "zl_len": [30, 50, 80], "tp_coef": [1.0, 1.5, 2.0]},
+    "BBRSI":    {"bb_dev": [1.5, 2.0, 2.5], "tp_coef": [1.0, 1.5, 2.0]},
+    "LRCUTB":   {"utb_coef": [1.5, 2.0, 3.0], "lrc_len": [8, 11, 14], "tp_coef": [1.0, 1.5, 2.0]},
+    "2MACDSTO": {"sto_level": [20, 30, 40], "tp_coef": [1.0, 1.5, 2.0]},
+    "NWE":      {"nwe_mult": [1.5, 2.0, 3.0], "nwe_band": [6.0, 8.0, 10.0], "tp_coef": [1.0, 1.5, 2.0]},
+}
+
+
+def optimize_strategy(bars: Bars, name: str, base: Params, min_trades: int):
+    """Sweep the strategy's grid; return (overrides, stats) with the best
+    profit factor among combos meeting the min-trades bar, or None."""
+    grid = PARAM_GRIDS.get(name, {})
+    keys = list(grid.keys())
+    best = None  # (pf_key, overrides, stats)
+    for combo in product(*[grid[k] for k in keys]):
+        overrides = dict(zip(keys, combo))
+        p = replace(base, **overrides)
+        st = stats_from_pnls(simulate(bars, STRATEGIES[name](bars, p), p))
+        if st.trades < min_trades:
+            continue
+        pf = st.profit_factor
+        key = 0.0 if pf == float("inf") else pf  # don't let 0-loss combos game it
+        if best is None or key > best[0]:
+            best = (key, overrides, st)
+    return None if best is None else (best[1], best[2])
+
+
+def print_optimization(datasets: list, base: Params, min_trades: int):
+    for bars in datasets:
+        print("=" * 78)
+        print(f"OPTIMIZE  {bars.label}   (min trades = {min_trades})")
+        print("-" * 78)
+        print(f"{'Strategy':<10}{'PF':>6}{'Trades':>8}{'Net':>10}{'MaxDD':>10}  best params")
+        for name in STRATEGIES:
+            res = optimize_strategy(bars, name, base, min_trades)
+            if res is None:
+                print(f"{name:<10}{'—':>6}{'—':>8}{'—':>10}{'—':>10}  (no combo met min trades)")
+                continue
+            ov, st = res
+            pf = "inf" if st.profit_factor == float("inf") else f"{st.profit_factor:.2f}"
+            params = " ".join(f"{k}={v}" for k, v in ov.items())
+            print(f"{name:<10}{pf:>6}{st.trades:>8}{st.net:>10.2f}{st.max_drawdown:>10.2f}  {params}")
+    print("=" * 78)
+    print("Best-in-sample params are a STARTING point, not a guarantee. Beware")
+    print("overfitting: validate the winner on out-of-sample data + Demo.")
+
+
 def print_ranking(rows: list):
     rows_sorted = sorted(
         rows,
@@ -527,6 +581,10 @@ def main() -> int:
     ap.add_argument("--nwe-window", type=int, default=100)
     ap.add_argument("--nwe-band", type=float, default=8.0)
     ap.add_argument("--nwe-mult", type=float, default=3.0)
+    ap.add_argument("--optimize", action="store_true",
+                    help="sweep a parameter grid per strategy and print the best combo")
+    ap.add_argument("--min-trades", type=int, default=30,
+                    help="minimum trades for an optimize combo to qualify")
     ap.add_argument("--detail", action="store_true", help="print a full report per row")
     args = ap.parse_args()
 
@@ -544,6 +602,10 @@ def main() -> int:
     if not datasets:
         ap.print_help()
         return 1
+
+    if args.optimize:
+        print_optimization(datasets, p, args.min_trades)
+        return 0
 
     rows = run(datasets, p)
     print_ranking(rows)

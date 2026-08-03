@@ -87,5 +87,16 @@ class Settings:
     # reflect the EA's real state.
     status_file: str = _get("STATUS_FILE", "spircore_status.csv")
 
+    # --- Notifications (all optional; empty = channel disabled) ---
+    tg_token: str = _get("TELEGRAM_TOKEN", "")
+    tg_chat_id: str = _get("TELEGRAM_CHAT_ID", "")
+    smtp_host: str = _get("SMTP_HOST", "")
+    smtp_port: int = _get_int("SMTP_PORT", 587)
+    smtp_user: str = _get("SMTP_USER", "")
+    smtp_password: str = _get("SMTP_PASSWORD", "")
+    smtp_tls: bool = _get("SMTP_TLS", "true").lower() == "true"
+    email_from: str = _get("EMAIL_FROM", "")
+    email_to: str = _get("EMAIL_TO", "")
+
 
 settings = Settings()
