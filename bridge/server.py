@@ -20,6 +20,7 @@ Run
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 
@@ -35,14 +36,29 @@ from models import Result, Signal
 # ---------------------------------------------------------------------------
 # App + lifespan (connect/disconnect MT5 once)
 # ---------------------------------------------------------------------------
+async def _management_loop():
+    """Periodically apply break-even / trailing to open positions."""
+    interval = max(0.5, settings.manage_interval_sec)
+    while True:
+        try:
+            await asyncio.to_thread(mt5_client.manage_positions)
+        except Exception as exc:  # never let the loop die
+            print(f"[manage] error: {exc}")
+        await asyncio.sleep(interval)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     mt5_client.connect()
     print(f"[bridge] MT5 connected | symbol={settings.symbol} | "
           f"listening on {settings.host}:{settings.port}")
+    task = asyncio.create_task(_management_loop())
     try:
         yield
     finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
         mt5_client.shutdown()
         print("[bridge] MT5 disconnected")
 

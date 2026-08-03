@@ -62,6 +62,16 @@ class Settings:
     max_daily_loss_pct: float = _get_float("MAX_DAILY_LOSS_PCT", 5.0)
     max_trades_per_day: int = _get_int("MAX_TRADES_PER_DAY", 10)
 
+    # --- Position management (mirrors the EA) ---
+    use_break_even: bool = _get("USE_BREAK_EVEN", "true").lower() == "true"
+    be_trigger_pts: int = _get_int("BE_TRIGGER_PTS", 300)
+    be_lock_pts: int = _get_int("BE_LOCK_PTS", 20)
+    use_trailing: bool = _get("USE_TRAILING", "true").lower() == "true"
+    trail_start_pts: int = _get_int("TRAIL_START_PTS", 400)
+    trail_dist_pts: int = _get_int("TRAIL_DIST_PTS", 250)
+    trail_step_pts: int = _get_int("TRAIL_STEP_PTS", 30)
+    manage_interval_sec: float = _get_float("MANAGE_INTERVAL_SEC", 2.0)
+
     # --- Chart-drawing bridge (Python -> EA) ---
     # File the EA polls to draw Python-pushed levels. Point this at the
     # terminal's MQL5/Files folder so the EA can read it locally.

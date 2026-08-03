@@ -258,6 +258,64 @@ def _attach_brackets(symbol, ticket, sl, tp) -> bool:
     return False
 
 
+def manage_positions(symbol: Optional[str] = None) -> None:
+    """
+    Break-even + trailing-stop on this EA's open positions (mirrors the EA).
+    Only ever moves the stop favorably; keeps TP. Called periodically by the
+    server's background loop, so alert/bridge trades get the same management
+    the EA gives its own trades.
+    """
+    if not settings.use_break_even and not settings.use_trailing:
+        return
+
+    s = _sym(symbol)
+    info = mt5.symbol_info(s)
+    tick = mt5.symbol_info_tick(s)
+    if info is None or tick is None or info.point <= 0:
+        return
+
+    pt = info.point
+    step = max(1, settings.trail_step_pts) * pt
+
+    with _lock:
+        for p in mt5.positions_get(symbol=s) or []:
+            if p.magic != settings.magic:
+                continue
+            entry = p.price_open
+            cur_sl = p.sl
+
+            if p.type == mt5.POSITION_TYPE_BUY:
+                profit_pts = (tick.bid - entry) / pt
+                new_sl = cur_sl
+                if settings.use_break_even and profit_pts >= settings.be_trigger_pts:
+                    new_sl = max(new_sl, entry + settings.be_lock_pts * pt)
+                if settings.use_trailing and profit_pts >= settings.trail_start_pts:
+                    new_sl = max(new_sl, tick.bid - settings.trail_dist_pts * pt)
+                if new_sl > cur_sl + step - pt and new_sl < tick.bid:
+                    _modify_sl(s, p.ticket, round(new_sl, info.digits), p.tp)
+
+            elif p.type == mt5.POSITION_TYPE_SELL:
+                profit_pts = (entry - tick.ask) / pt
+                sl = cur_sl if cur_sl > 0 else float("inf")
+                if settings.use_break_even and profit_pts >= settings.be_trigger_pts:
+                    sl = min(sl, entry - settings.be_lock_pts * pt)
+                if settings.use_trailing and profit_pts >= settings.trail_start_pts:
+                    sl = min(sl, tick.ask + settings.trail_dist_pts * pt)
+                if sl != float("inf") and (cur_sl == 0 or sl < cur_sl - step + pt) and sl > tick.ask:
+                    _modify_sl(s, p.ticket, round(sl, info.digits), p.tp)
+
+
+def _modify_sl(symbol: str, ticket: int, sl: float, tp: float) -> None:
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "symbol": symbol,
+        "position": ticket,
+        "sl": sl,
+        "tp": tp,
+    }
+    mt5.order_send(req)
+
+
 def close_all(symbol: Optional[str] = None) -> dict:
     s = _sym(symbol)
     with _lock:

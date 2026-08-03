@@ -108,7 +108,10 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 | `levels.py` | كتابة المستويات إلى ملف يقرأه الـ EA ليرسمها |
 | `server.py` | خادم FastAPI: Webhook + WebSocket + حالة |
 | `analyze.py` | **أداة تحليل الأداء** — تقرأ سجل الصفقات وتحسب المقاييس الاحترافية |
+| `backtest.py` | **باك-تِست آلي** — يحاكي الاستراتيجيات الثلاث ويرتّبها بالـ Profit Factor |
 | `requirements.txt` / `.env.example` | التبعيات والإعدادات |
+
+> **إدارة الصفقات في الجسر**: يشغّل الخادم حلقة خلفية كل ثانيتين تطبّق **break-even + trailing** على الصفقات المفتوحة (نفس منطق الـ EA)، لتُدار صفقات التنبيهات تلقائياً أيضاً. تُضبط عبر `USE_BREAK_EVEN`, `TRAIL_*` في `.env`.
 
 ### 📊 أداة تحليل الأداء (`analyze.py`)
 تقرأ `spircore_journal.csv` وتطبع تقريراً بلا أي تبعيات خارجية:
@@ -116,6 +119,16 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 python analyze.py path/to/spircore_journal.csv
 ```
 تحسب: **عدد الصفقات، نسبة الفوز، صافي الربح، Profit Factor، التوقّع/صفقة (Expectancy)، متوسط الربح/الخسارة، أقصى تراجع (Max Drawdown)** — مع حكم صريح (نظام خاسر / أفضلية هامشية / إيجابي على العيّنة). هذه الأرقام هي ما يكشف إن كانت للاستراتيجية أفضلية حقيقية.
+
+### 🔬 الباك-تِست الآلي (`backtest.py`)
+يعيد تنفيذ الاستراتيجيات الثلاث بلغة Python ويحاكيها شمعة-بشمعة على بيانات تاريخية، ثم يرتّبها بالـ Profit Factor:
+```bash
+# من ملفات CSV (time,open,high,low,close) لكل فريم:
+python backtest.py data_M5.csv data_M15.csv
+# أو مباشرة من MT5 (ويندوز + المنصة تعمل):
+python backtest.py --mt5 --symbol XAUUSD --timeframes M5,M15,H1 --bars 5000
+```
+يطبع جدولاً مرتّباً (Trades / Win% / PF / Net / MaxDD) لكل استراتيجية × فريم. **الباك-تِست مرشِّح لا وعد** — أي نتيجة بأقل من 100 صفقة أو PF < 1.3 تُعتبر ضجيجاً، والنتيجة الجيدة تعني «تستحق اختبار Demo» فقط.
 
 ### نقاط الاتصال (Endpoints)
 - `GET  /health` — فحص الحياة.
@@ -172,7 +185,7 @@ python server.py              # أو: uvicorn server:app --host 127.0.0.1 --port
 | **MT5 Web** | يؤتمت **منصة MT5 على الويب** مباشرةً داخل المتصفح (نقر الأزرار) | ❌ | ❌ |
 | **Auto** | يفضّل الجسر إن كان متصلاً، وإلا يسقط تلقائياً لوضع الويب | اختياري | اختياري |
 
-> **وضع MT5 Web** يعمل على `trade.mql5.com` و `web.metatrader5.com` وواجهات البروكرز البيضاء. افتح لوحة **One-Click Trading** في المنصة لأفضل موثوقية. محدّدات الـ DOM قابلة للتعديل في مكان واحد داخل `mt5web.js` (`SELECTORS`) لأنها تختلف بين الإصدارات والبروكرز.
+> **وضع MT5 Web** يعمل على `trade.mql5.com` و `web.metatrader5.com` وواجهات البروكرز البيضاء. افتح لوحة **One-Click Trading** في المنصة لأفضل موثوقية. محدّدات الـ DOM قابلة للتعديل في مكان واحد داخل `mt5web.js` (`SELECTORS`)، **أو** أضف محدّدات خاصة ببروكرك مباشرةً من نافذة الإضافة (حقل *Custom MT5 Web selectors* بصيغة JSON) دون تعديل الكود — تُدمج قبل الافتراضية.
 > للاختبار اليدوي من كونسول صفحة المنصة: `window.__spircoreWeb("buy", 0.10)`.
 
 ### قواعد نص التنبيه في TradingView
