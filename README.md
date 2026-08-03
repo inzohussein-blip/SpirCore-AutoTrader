@@ -3,6 +3,8 @@
 نظام تداول هجين عابر للمنصات مخصص للذهب (XAUUSD) على منصة MetaTrader 5.
 A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 
+> 🚀 للتشغيل السريع خطوة بخطوة، راجع **[QUICKSTART.md](QUICKSTART.md)**.
+
 ## البنية العامة / Architecture
 
 النظام مقسوم إلى ثلاث طبقات مستقلة ومترابطة:
@@ -31,11 +33,12 @@ A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 5. **محرك استراتيجيات للذهب** (مقتبس ومطوّر من [`geraked/metatrader5`](https://github.com/geraked/metatrader5)):
    - **CEZLSMA** (اتجاهية): Chandelier Exit + ZLSMA على إغلاق Heikin-Ashi. شراء عندما يكون اتجاه الـ CE صاعداً وإغلاق HA فوق الـ ZLSMA، والعكس للبيع. وقف الخسارة ديناميكي من خط الـ Chandelier.
    - **BBRSI** (ارتدادية): Bollinger Bands + RSI. دخول عند الارتداد من التشبع (RSI + كسر الباند ثم العودة). وقف الخسارة خلف الباند.
+   - **LRCUTB** (زخم/Momentum): Linear Regression Candles + UT Bot. شراء عندما تكون شمعة الانحدار صاعدة وفوق خط الإشارة **مع** إشارة UT Bot صاعدة خلال آخر 3 شموع، والعكس للبيع. وقف الخسارة من آخر قاع/قمة (Swing).
    - الإشارات تُحسب **على إغلاق الشمعة فقط** (لا تكرار داخل نفس الشمعة)، وتظهر على شريط اللوحة. إذا كانت الأتمتة `ON` تُنفَّذ تلقائياً بأسلوب ECN مع احترام فلتر السبريد وحد الصفقات المفتوحة (`InpMaxPositions`). إذا كانت `OFF` تبقى الإشارة استشارية فقط لتأكيدها يدوياً.
    - `InpUseStratSLTP` يتحكم في استخدام SL/TP الديناميكي للاستراتيجية أو الرجوع للنقاط الثابتة. الـ TP يُشتق من مسافة المخاطرة عبر `InpTPCoef`.
 
 ### الاستراتيجيات المتاحة (من المستودع، يمكن إضافة المزيد لاحقاً)
-المنفّذة حالياً: **CEZLSMA**, **BBRSI**. المستودع الأصلي يضم أيضاً: 3MAF, DHLAOS, 3MACD, 2MACDSTO, 2MAAOS, AFAOSMD, NWERSIASF, LRCUTB, COT1 — قابلة للإضافة لنفس المحرك عند الطلب.
+المنفّذة حالياً: **CEZLSMA**, **BBRSI**, **LRCUTB**. المستودع الأصلي يضم أيضاً: 3MAF, DHLAOS, 3MACD, 2MACDSTO, 2MAAOS, AFAOSMD, NWERSIASF, COT1 — قابلة للإضافة لنفس المحرك عند الطلب.
 
 ### الإعدادات الافتراضية (قابلة للتعديل من نافذة الـ EA)
 - الرمز: `XAUUSD`

@@ -73,6 +73,13 @@ input int      InpBB_Period     = 500;        // Bollinger period
 input double   InpBB_Dev        = 2.0;        // Bollinger deviations
 input int      InpRSI_Period    = 7;          // RSI period
 
+input group    "--- LRCUTB (momentum) ---"
+input int      InpLRC_Len       = 11;         // Linear-regression candle length
+input int      InpLRC_SmaLen    = 7;          // Signal SMA length
+input int      InpUTB_AtrLen    = 1;          // UT Bot ATR length
+input double   InpUTB_Coef      = 2.0;        // UT Bot ATR multiplier
+input int      InpSwingLook     = 10;         // Swing SL lookback (bars)
+
 input group    "--- Strategy risk shaping ---"
 input double   InpTPCoef        = 1.5;        // TP = TPCoef x risk distance
 input int      InpStratSLDevPts = 50;         // Extra SL buffer beyond raw stop (points)
@@ -128,7 +135,8 @@ int OnInit()
    // --- Configure + initialize the strategy (analysis) engine ------
    StratConfigure(InpCE_AtrPeriod, InpCE_Mult, InpZL_Period,
                   InpBB_Period, InpBB_Dev, InpRSI_Period,
-                  InpTPCoef, InpStratSLDevPts);
+                  InpLRC_Len, InpLRC_SmaLen, InpUTB_AtrLen, InpUTB_Coef,
+                  InpSwingLook, InpTPCoef, InpStratSLDevPts);
    if(InpStrategy != STRAT_NONE && !StratInit(InpSymbol, (ENUM_TIMEFRAMES)Period()))
    {
       Print("ERROR: strategy engine failed to initialize.");
@@ -284,6 +292,7 @@ string StrategyName(const ENUM_STRATEGY s)
    {
       case STRAT_CEZLSMA: return("CEZLSMA");
       case STRAT_BBRSI:   return("BBRSI");
+      case STRAT_LRCUTB:  return("LRCUTB");
       default:            return("NONE");
    }
 }

@@ -21,7 +21,8 @@ enum ENUM_STRATEGY
 {
    STRAT_NONE     = 0,   // None (manual only)
    STRAT_CEZLSMA  = 1,   // CEZLSMA - trend (Chandelier Exit + ZLSMA + HA)
-   STRAT_BBRSI    = 2    // BBRSI - mean reversion (Bollinger + RSI)
+   STRAT_BBRSI    = 2,   // BBRSI - mean reversion (Bollinger + RSI)
+   STRAT_LRCUTB   = 3    // LRCUTB - momentum (Lin.Reg Candles + UT Bot)
 };
 
 enum ENUM_SIGNAL { SIG_NONE = 0, SIG_BUY = 1, SIG_SELL = -1 };
@@ -46,6 +47,12 @@ int    S_ZL_Period    = 50;
 int    S_BB_Period    = 500;
 double S_BB_Dev       = 2.0;
 int    S_RSI_Period   = 7;
+// --- LRCUTB ---
+int    S_LRC_Len      = 11;    // Linear-regression candle length
+int    S_LRC_SmaLen   = 7;     // Signal SMA length over LRC close
+int    S_UTB_AtrLen   = 1;     // UT Bot ATR length
+double S_UTB_Coef     = 2.0;   // UT Bot ATR multiplier (sensitivity)
+int    S_SwingLook    = 10;    // Swing-based SL lookback (bars)
 // --- shared risk shaping ---
 double S_TPCoef       = 1.5;   // TP = entry +/- TPCoef * |entry-SL|
 int    S_SLDevPts     = 50;    // extra buffer (points) added beyond the raw stop
@@ -57,16 +64,18 @@ int    S_Digits;
 double S_Point;
 
 // Indicator handles
-int    h_atr   = INVALID_HANDLE;
-int    h_bands = INVALID_HANDLE;
-int    h_rsi   = INVALID_HANDLE;
+int    h_atr     = INVALID_HANDLE;   // Chandelier ATR
+int    h_bands   = INVALID_HANDLE;
+int    h_rsi     = INVALID_HANDLE;
+int    h_atr_utb = INVALID_HANDLE;   // UT Bot ATR
 
 //+------------------------------------------------------------------+
 //| Push the EA's input values into this module.                     |
 //+------------------------------------------------------------------+
 void StratConfigure(int ceAtrPeriod, double ceMult, int zlPeriod,
                     int bbPeriod, double bbDev, int rsiPeriod,
-                    double tpCoef, int slDevPts)
+                    int lrcLen, int lrcSmaLen, int utbAtrLen, double utbCoef,
+                    int swingLook, double tpCoef, int slDevPts)
 {
    S_CE_AtrPeriod = ceAtrPeriod;
    S_CE_Mult      = ceMult;
@@ -74,6 +83,11 @@ void StratConfigure(int ceAtrPeriod, double ceMult, int zlPeriod,
    S_BB_Period    = bbPeriod;
    S_BB_Dev       = bbDev;
    S_RSI_Period   = rsiPeriod;
+   S_LRC_Len      = lrcLen;
+   S_LRC_SmaLen   = lrcSmaLen;
+   S_UTB_AtrLen   = utbAtrLen;
+   S_UTB_Coef     = utbCoef;
+   S_SwingLook    = swingLook;
    S_TPCoef       = tpCoef;
    S_SLDevPts     = slDevPts;
 }
@@ -88,11 +102,13 @@ bool StratInit(const string symbol, const ENUM_TIMEFRAMES tf)
    S_Digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    S_Point  = SymbolInfoDouble(symbol, SYMBOL_POINT);
 
-   h_atr   = iATR(symbol, tf, S_CE_AtrPeriod);
-   h_bands = iBands(symbol, tf, S_BB_Period, 0, S_BB_Dev, PRICE_CLOSE);
-   h_rsi   = iRSI(symbol, tf, S_RSI_Period, PRICE_CLOSE);
+   h_atr     = iATR(symbol, tf, S_CE_AtrPeriod);
+   h_bands   = iBands(symbol, tf, S_BB_Period, 0, S_BB_Dev, PRICE_CLOSE);
+   h_rsi     = iRSI(symbol, tf, S_RSI_Period, PRICE_CLOSE);
+   h_atr_utb = iATR(symbol, tf, S_UTB_AtrLen);
 
-   if(h_atr == INVALID_HANDLE || h_bands == INVALID_HANDLE || h_rsi == INVALID_HANDLE)
+   if(h_atr == INVALID_HANDLE || h_bands == INVALID_HANDLE ||
+      h_rsi == INVALID_HANDLE || h_atr_utb == INVALID_HANDLE)
    {
       Print("StratInit ERROR: failed to create one or more indicator handles.");
       return(false);
@@ -105,9 +121,10 @@ bool StratInit(const string symbol, const ENUM_TIMEFRAMES tf)
 //+------------------------------------------------------------------+
 void StratDeinit()
 {
-   if(h_atr   != INVALID_HANDLE) IndicatorRelease(h_atr);
-   if(h_bands != INVALID_HANDLE) IndicatorRelease(h_bands);
-   if(h_rsi   != INVALID_HANDLE) IndicatorRelease(h_rsi);
+   if(h_atr     != INVALID_HANDLE) IndicatorRelease(h_atr);
+   if(h_bands   != INVALID_HANDLE) IndicatorRelease(h_bands);
+   if(h_rsi     != INVALID_HANDLE) IndicatorRelease(h_rsi);
+   if(h_atr_utb != INVALID_HANDLE) IndicatorRelease(h_atr_utb);
 }
 
 //==================================================================
@@ -305,6 +322,130 @@ SignalResult Signal_BBRSI()
 }
 
 //==================================================================
+//  LRCUTB  (Linear Regression Candles + UT Bot)
+//==================================================================
+
+//+------------------------------------------------------------------+
+//| Simple moving average of the LRC-close series ending at `shift`. |
+//| LRC close at each bar = LSMA(close, LRC_Len). Signal = SMA of    |
+//| those over LRC_SmaLen bars.                                      |
+//+------------------------------------------------------------------+
+double LRC_Signal(const double &close[], const int shift, const int lrcLen, const int smaLen)
+{
+   double sum = 0;
+   for(int i = 0; i < smaLen; i++)
+      sum += LSMA_Endpoint(close, shift + i, lrcLen);
+   return(sum / smaLen);
+}
+
+//+------------------------------------------------------------------+
+//| UT Bot trailing-stop crossover signals over a lookback.          |
+//| Fills as-series boolean arrays: buySig[i]/sellSig[i] true when   |
+//| close crosses above/below the ATR trailing stop at bar i.        |
+//+------------------------------------------------------------------+
+bool UTBotState(bool &buySig[], bool &sellSig[], const int count)
+{
+   double close[], atr[];
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(atr,   true);
+   if(CopyClose(S_Symbol, S_TF, 0, count, close) < count) return(false);
+   if(CopyBuffer(h_atr_utb, 0, 0, count, atr)    < count) return(false);
+
+   double stop[];
+   ArrayResize(stop, count);
+   ArraySetAsSeries(stop, true);
+
+   ArrayResize(buySig,  count);
+   ArrayResize(sellSig, count);
+   ArraySetAsSeries(buySig,  true);
+   ArraySetAsSeries(sellSig, true);
+   ArrayInitialize(buySig,  false);
+   ArrayInitialize(sellSig, false);
+
+   // iterate oldest -> newest
+   for(int i = count - 2; i >= 1; i--)
+   {
+      double nLoss = S_UTB_Coef * atr[i];
+      double prevStop = stop[i + 1];
+
+      if(close[i] > prevStop && close[i + 1] > prevStop)
+         stop[i] = MathMax(prevStop, close[i] - nLoss);
+      else if(close[i] < prevStop && close[i + 1] < prevStop)
+         stop[i] = MathMin(prevStop, close[i] + nLoss);
+      else if(close[i] > prevStop)
+         stop[i] = close[i] - nLoss;
+      else
+         stop[i] = close[i] + nLoss;
+
+      // crossover detection vs the previous bar's stop
+      if(close[i] > stop[i] && close[i + 1] <= prevStop) buySig[i]  = true;
+      if(close[i] < stop[i] && close[i + 1] >= prevStop) sellSig[i] = true;
+   }
+   return(true);
+}
+
+//+------------------------------------------------------------------+
+//| Swing-based stop: recent lowest-low (buy) / highest-high (sell). |
+//+------------------------------------------------------------------+
+double SwingSL(const bool isBuy)
+{
+   double high[], low[];
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low,  true);
+   if(CopyHigh(S_Symbol, S_TF, 1, S_SwingLook, high) < S_SwingLook) return(0.0);
+   if(CopyLow (S_Symbol, S_TF, 1, S_SwingLook, low)  < S_SwingLook) return(0.0);
+
+   double dev = S_SLDevPts * S_Point;
+   if(isBuy)
+   {
+      int idx = ArrayMinimum(low, 0, S_SwingLook);
+      return(low[idx] - dev);
+   }
+   int idx = ArrayMaximum(high, 0, S_SwingLook);
+   return(high[idx] + dev);
+}
+
+//+------------------------------------------------------------------+
+//| LRCUTB signal on the last closed bar.                            |
+//|   BUY  : LRC_C[1] > LRC_O[1] AND LRC_C[1] > LRC_S[1]            |
+//|          AND a UT-Bot bullish cross within the last 3 bars.     |
+//|   SELL : symmetric (bearish).                                   |
+//+------------------------------------------------------------------+
+SignalResult Signal_LRCUTB()
+{
+   SignalResult r; r.sig = SIG_NONE; r.sl = 0; r.tp = 0;
+
+   int need = S_LRC_Len + S_LRC_SmaLen + 5;
+   double close[], open[];
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(open,  true);
+   if(CopyClose(S_Symbol, S_TF, 0, need, close) < need) return(r);
+   if(CopyOpen (S_Symbol, S_TF, 0, need, open)  < need) return(r);
+
+   double lrcC = LSMA_Endpoint(close, 1, S_LRC_Len);
+   double lrcO = LSMA_Endpoint(open,  1, S_LRC_Len);
+   double lrcS = LRC_Signal(close, 1, S_LRC_Len, S_LRC_SmaLen);
+
+   bool buySig[], sellSig[];
+   if(!UTBotState(buySig, sellSig, 300)) return(r);
+
+   bool utbBull = (buySig[1]  || buySig[2]  || buySig[3]);
+   bool utbBear = (sellSig[1] || sellSig[2] || sellSig[3]);
+
+   if(lrcC > lrcO && lrcC > lrcS && utbBull)
+   {
+      r.sig = SIG_BUY;
+      r.sl  = SwingSL(true);
+   }
+   else if(lrcC < lrcO && lrcC < lrcS && utbBear)
+   {
+      r.sig = SIG_SELL;
+      r.sl  = SwingSL(false);
+   }
+   return(r);
+}
+
+//==================================================================
 //  Dispatcher
 //==================================================================
 
@@ -331,6 +472,7 @@ SignalResult GetStrategySignal(const ENUM_STRATEGY strat)
    {
       case STRAT_CEZLSMA: return(Signal_CEZLSMA());
       case STRAT_BBRSI:   return(Signal_BBRSI());
+      case STRAT_LRCUTB:  return(Signal_LRCUTB());
       default:            return(r);
    }
 }
