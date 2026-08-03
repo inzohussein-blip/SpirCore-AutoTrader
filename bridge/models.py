@@ -45,6 +45,10 @@ class Control(BaseModel):
     action: Literal[
         "close_all", "close_ticket", "flatten",
         "ea_auto", "ea_strategy", "ea_risk_daily",
+        "open_buy", "open_sell", "modify",
     ]
-    ticket: Optional[int] = None      # for close_ticket
+    ticket: Optional[int] = None      # for close_ticket / modify
     value: Optional[str] = None       # on/off, strategy name, or risk %
+    lot: Optional[float] = None       # for open_buy / open_sell
+    sl: Optional[float] = None        # for open_* / modify (absolute price)
+    tp: Optional[float] = None        # for open_* / modify (absolute price)
