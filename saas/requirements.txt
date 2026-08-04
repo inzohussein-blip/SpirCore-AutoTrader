@@ -1,0 +1,4 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+# db.py uses only the standard library (sqlite3). Add 'stripe' when wiring
+# real billing.
