@@ -59,6 +59,11 @@ input group    "=== Dashboard Control / أوامر لوحة التحكم ==="
 input bool     InpReadCommands  = true;        // Obey control commands from the dashboard (via bridge)
 input string   InpCommandsFile  = "spircore_commands.csv"; // File in MQL5/Files (bridge writes it)
 
+input group    "=== Licensing / الترخيص ==="
+input bool     InpUseLicense    = false;       // Require a valid SaaS license to trade
+input string   InpLicenseURL    = "http://127.0.0.1:9000"; // SaaS base URL (whitelist in MT5 options)
+input string   InpLicenseKey    = "";          // Your license key (SPIR-...)
+
 input group    "=== Execution / التنفيذ ==="
 input int      InpSlippagePts   = 20;         // Max deviation/slippage in points
 input int      InpModifyRetries = 3;          // Retries for the ECN PositionModify step
@@ -145,6 +150,8 @@ double         g_riskMaxDaily;            // runtime daily-loss limit (dashboard
 enum ENUM_SELMODE { SEL_SINGLE = 0, SEL_HYBRID = 1, SEL_AUTO = 2 };
 ENUM_SELMODE   g_selMode = SEL_SINGLE;
 datetime       g_lastStatusWrite = 0;
+bool           g_licensed = true;          // license validity (when licensing is on)
+datetime       g_lastLicenseCheck = 0;
 
 // --- Object names (kept in one place for clean create/delete) -------
 #define OBJ_PREFIX     "SPIRCORE_"
@@ -206,6 +213,8 @@ int OnInit()
    RecalcFutureLines(true);
    RefreshStatusLabel();
 
+   CheckLicense();   // validate up front (no-op unless InpUseLicense)
+
    WriteStatus();
    ChartRedraw();
    Print("SpirCore_EA initialized on ", InpSymbol, " | Auto=", (g_autoOn ? "ON" : "OFF"));
@@ -257,6 +266,58 @@ void OnTick()
    {
       g_lastStatusWrite = TimeCurrent();
       WriteStatus();
+   }
+
+   // 8) LICENSE: re-validate hourly (no-op unless licensing is enabled).
+   if(InpUseLicense && TimeCurrent() - g_lastLicenseCheck >= 3600)
+      CheckLicense();
+}
+
+//+------------------------------------------------------------------+
+//| Validate the SaaS license via WebRequest. Sets g_licensed.       |
+//| NOTE: whitelist InpLicenseURL in Tools > Options > Expert        |
+//| Advisors > Allow WebRequest for listed URL.                      |
+//+------------------------------------------------------------------+
+void CheckLicense()
+{
+   g_lastLicenseCheck = TimeCurrent();
+   if(!InpUseLicense)
+   {
+      g_licensed = true;
+      return;
+   }
+
+   long account = AccountInfoInteger(ACCOUNT_LOGIN);
+   string url = InpLicenseURL + "/license/validate?key=" + InpLicenseKey +
+                "&account=" + (string)account;
+
+   char data[], result[];
+   string result_headers;
+   ResetLastError();
+   int code = WebRequest("GET", url, "", 5000, data, result, result_headers);
+   if(code == -1)
+   {
+      PrintFormat("License check failed (WebRequest err %d). Whitelist %s in MT5 options.",
+                  GetLastError(), InpLicenseURL);
+      g_licensed = false;   // fail closed: no verification -> no trading
+   }
+   else if(code == 200)
+   {
+      string body = CharArrayToString(result);
+      g_licensed = (StringFind(body, "\"valid\":true") >= 0);
+      PrintFormat("License check: %s", (g_licensed ? "VALID" : "INVALID"));
+   }
+   else
+   {
+      PrintFormat("License server HTTP %d -> treating as unlicensed", code);
+      g_licensed = false;
+   }
+
+   if(!g_licensed)
+   {
+      g_autoOn = false;   // stop automation when unlicensed
+      RefreshAutoButton();
+      ShowTouchBanner("LICENSE INVALID - trading disabled");
    }
 }
 
@@ -762,6 +823,13 @@ bool OpenTradeECN(const ENUM_ORDER_TYPE type, const string tag,
                   const double slPrice = 0.0, const double tpPrice = 0.0,
                   const double lotOverride = 0.0)
 {
+   // Licensing gate: block ALL entries (manual + auto) when unlicensed.
+   if(InpUseLicense && !g_licensed)
+   {
+      Print("Entry blocked: no valid license.");
+      return(false);
+   }
+
    // Spread filter guards the automatic path; manual clicks also respect it.
    if(!SpreadOK())
    {

@@ -8,6 +8,7 @@ venv/
 # Runtime data
 *.csv
 *.log
+*.db
 # ...but keep committed test fixtures
 !bridge/tests/*.csv
 
