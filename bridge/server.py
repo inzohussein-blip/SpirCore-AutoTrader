@@ -80,27 +80,71 @@ def _journal_row_count() -> int:
         return 0
 
 
+def push_performance() -> None:
+    """Optionally publish current performance to the SaaS public page.
+    No-op unless SAAS_URL + SAAS_LICENSE_KEY are configured."""
+    if not (settings.saas_url and settings.saas_license_key):
+        return
+    import csv as _csv
+    import json as _json
+    import urllib.request as _url
+    from analyze import stats_from_pnls
+
+    pnls = []
+    try:
+        with open(settings.journal_file, newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                pnls.append((float(row.get("profit") or 0)
+                             + float(row.get("swap") or 0)
+                             + float(row.get("commission") or 0)))
+    except FileNotFoundError:
+        return
+    st = stats_from_pnls(pnls)
+    pf = st.profit_factor
+    body = _json.dumps({
+        "key": settings.saas_license_key,
+        "stats": {
+            "net": round(st.net, 2), "trades": st.trades,
+            "win_rate": round(st.win_rate, 1),
+            "profit_factor": None if pf == float("inf") else round(pf, 2),
+            "max_dd": round(st.max_drawdown, 2),
+            "equity_json": _json.dumps(st.equity_curve[-200:]),
+        },
+    }).encode()
+    req = _url.Request(f"{settings.saas_url}/performance/report", data=body,
+                       headers={"Content-Type": "application/json"})
+    try:
+        with _url.urlopen(req, timeout=8) as r:
+            r.read()
+    except Exception as exc:  # never let a push break trading
+        print(f"[saas] performance push failed: {exc}")
+
+
 async def _journal_watch_loop():
-    """Notify on newly closed trades (covers EA auto-trades and bridge trades)."""
+    """Notify on newly closed trades (covers EA auto-trades and bridge trades)
+    and publish performance to the SaaS page when configured."""
     last = _journal_row_count()
+    saas_on = bool(settings.saas_url and settings.saas_license_key)
     while True:
         await asyncio.sleep(5.0)
-        if not notify.enabled():
+        if not notify.enabled() and not saas_on:
             last = _journal_row_count()
             continue
         try:
             count = _journal_row_count()
             if count > last:
-                new_rows = []
-                with open(settings.journal_file, encoding="utf-8") as fh:
-                    new_rows = fh.read().splitlines()[1:]  # drop header
-                for row in new_rows[last:count]:
-                    cols = row.split(",")
-                    if len(cols) >= 6:
-                        notify.send(f"Trade closed: {cols[2]} {cols[3]} @ {cols[4]} "
-                                    f"P/L {cols[5]} ({cols[8] if len(cols) > 8 else ''})",
-                                    subject="SpirCore: trade closed")
-                last = count
+                if notify.enabled():
+                    with open(settings.journal_file, encoding="utf-8") as fh:
+                        new_rows = fh.read().splitlines()[1:]  # drop header
+                    for row in new_rows[last:count]:
+                        cols = row.split(",")
+                        if len(cols) >= 6:
+                            notify.send(f"Trade closed: {cols[2]} {cols[3]} @ {cols[4]} "
+                                        f"P/L {cols[5]} ({cols[8] if len(cols) > 8 else ''})",
+                                        subject="SpirCore: trade closed")
+                if saas_on:
+                    await asyncio.to_thread(push_performance)
+                last = count   # advance once, after handling both channels
         except Exception as exc:  # never let the loop die
             print(f"[journal-watch] error: {exc}")
 

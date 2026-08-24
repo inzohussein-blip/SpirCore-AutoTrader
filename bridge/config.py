@@ -109,5 +109,9 @@ class Settings:
     email_from: str = _get("EMAIL_FROM", "")
     email_to: str = _get("EMAIL_TO", "")
 
+    # --- SaaS performance push (optional; empty = disabled) ---
+    saas_url: str = _get("SAAS_URL", "")
+    saas_license_key: str = _get("SAAS_LICENSE_KEY", "")
+
 
 settings = Settings()
