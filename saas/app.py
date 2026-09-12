@@ -76,6 +76,18 @@ def admin_revoke(key: str = Body(..., embed=True),
     return {"revoked": db.revoke_license(key)}
 
 
+@app.get("/admin/licenses")
+def admin_licenses(x_admin_token: str | None = Header(default=None)):
+    _require_admin(x_admin_token)
+    return {"licenses": db.list_all_licenses()}
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page():
+    """Admin console (license management). Auth is per-request via the token."""
+    return HTMLResponse(_ADMIN_HTML)
+
+
 @app.get("/license/validate")
 def license_validate(key: str = Query(...), account: str = Query("")):
     """Called by the EA. Public by design; returns validity only."""
@@ -194,4 +206,77 @@ def _render_public(key: str, perf: dict | None) -> str:
   <p class="muted">License {safe_key}</p>
   {body}
   <p class="disc">⚠️ {disclaimer}</p>
+</body></html>"""
+
+
+# ---------------------------------------------------------------------------
+# Admin console (self-contained HTML; auth via the admin token per request)
+# ---------------------------------------------------------------------------
+_ADMIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpirCore Admin</title>
+<style>
+  :root{--gold:#d4af37;--bg:#0f1116;--panel:#171a21;--bd:#2a2e38;--tx:#e8e8ea;--mut:#8a8f9c;--red:#c0392b;--grn:#2e8b57}
+  *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);margin:0;padding:20px}
+  h1{color:var(--gold);font-size:20px} .mut{color:var(--mut);font-size:12px}
+  input,select,button{background:#0e1015;border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:7px 9px;font-size:13px}
+  button{cursor:pointer;font-weight:600} .gold{background:var(--gold);color:#14161c;border:none}
+  section{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-top:14px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  table{width:100%;border-collapse:collapse;margin-top:10px} th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--bd);font-size:12px}
+  th{color:var(--mut)} .exp{color:var(--red)} .ok{color:var(--grn)}
+  code{font-size:11px;color:var(--gold)}
+</style></head><body>
+  <h1>⚡ SpirCore Admin</h1>
+  <div class="row"><input id="tok" type="password" placeholder="admin token" style="width:220px">
+    <button class="gold" onclick="save()">Save token</button>
+    <span id="msg" class="mut"></span></div>
+
+  <section>
+    <h3 style="margin:0 0 10px">Issue license</h3>
+    <div class="row">
+      <input id="email" placeholder="email">
+      <input id="account" placeholder="MT5 account (optional)" style="width:150px">
+      <input id="plan" placeholder="plan" value="standard" style="width:110px">
+      <input id="days" type="number" value="30" style="width:80px" title="days">
+      <button class="gold" onclick="issue()">Issue</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">Licenses</h3><button onclick="load()">Refresh</button>
+    </div>
+    <table><thead><tr><th>Key</th><th>Email</th><th>Account</th><th>Plan</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
+      <tbody id="rows"><tr><td colspan="7" class="mut">load to view</td></tr></tbody></table>
+  </section>
+
+<script>
+const $=id=>document.getElementById(id);
+let tok=localStorage.getItem("spir_admin")||""; $("tok").value=tok;
+function save(){tok=$("tok").value;localStorage.setItem("spir_admin",tok);msg("token saved");load();}
+function msg(t){$("msg").textContent=t;}
+async function api(path,opts){opts=opts||{};opts.headers=Object.assign({"Content-Type":"application/json","x-admin-token":tok},opts.headers||{});
+  const r=await fetch(path,opts);if(r.status===401){msg("unauthorized — check token");throw 0;}return r.json();}
+async function issue(){
+  try{const b={email:$("email").value,account:$("account").value,plan:$("plan").value,days:Number($("days").value)||30};
+    const r=await api("/admin/license",{method:"POST",body:JSON.stringify(b)});msg("issued: "+r.key);load();}catch(e){}
+}
+async function revoke(k){ if(!confirm("Revoke "+k+"?"))return;
+  try{await api("/admin/revoke",{method:"POST",body:JSON.stringify({key:k})});load();}catch(e){}
+}
+async function load(){
+  try{const d=await api("/admin/licenses");const now=Date.now()/1000;
+    $("rows").innerHTML=(d.licenses||[]).map(l=>{
+      const exp=new Date(l.expiry*1000).toISOString().slice(0,10);
+      const live=l.active&&l.expiry>now;
+      return `<tr><td><code>${l.key.slice(0,16)}…</code></td><td>${l.email}</td><td>${l.account||"—"}</td>`+
+        `<td>${l.plan}</td><td class="${l.expiry<now?'exp':''}">${exp}</td>`+
+        `<td class="${live?'ok':'exp'}">${live?'active':(l.active?'expired':'revoked')}</td>`+
+        `<td><button onclick="revoke('${l.key}')">Revoke</button></td></tr>`;
+    }).join("")||'<tr><td colspan="7" class="mut">no licenses</td></tr>';
+  }catch(e){}
+}
+if(tok) load();
+</script>
 </body></html>"""
