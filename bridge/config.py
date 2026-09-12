@@ -112,6 +112,8 @@ class Settings:
     # --- SaaS performance push (optional; empty = disabled) ---
     saas_url: str = _get("SAAS_URL", "")
     saas_license_key: str = _get("SAAS_LICENSE_KEY", "")
+    # Act as a copy-trading MASTER: broadcast our trades to followers.
+    saas_publish: bool = _get("SAAS_PUBLISH", "false").lower() == "true"
 
 
 settings = Settings()

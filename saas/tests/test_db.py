@@ -50,6 +50,23 @@ class TestSaasDB(unittest.TestCase):
         self.assertFalse(v["valid"])
         self.assertEqual(v["reason"], "expired")
 
+    def test_signals_publish_and_fetch(self):
+        ch = "SPIR-master"
+        s1 = db.publish_signal(ch, "buy", "XAUUSD", 0.1, 0, 0, "", self.path)
+        s2 = db.publish_signal(ch, "sell", "XAUUSD", 0.2, 0, 0, "", self.path)
+        self.assertGreater(s2["id"], s1["id"])
+        # fetch since 0 -> both, oldest first
+        all_sigs = db.fetch_signals(ch, 0, path=self.path)
+        self.assertEqual([s["action"] for s in all_sigs], ["buy", "sell"])
+        # fetch since s1 -> only the newer one
+        newer = db.fetch_signals(ch, s1["id"], path=self.path)
+        self.assertEqual(len(newer), 1)
+        self.assertEqual(newer[0]["id"], s2["id"])
+        # latest
+        self.assertEqual(db.latest_signal(ch, self.path)["action"], "sell")
+        # other channel is isolated
+        self.assertEqual(db.fetch_signals("other", 0, path=self.path), [])
+
     def test_performance_roundtrip(self):
         u = db.create_user("t5@x.com", self.path)
         lic = db.issue_license(u["id"], "", "std", 30, self.path)

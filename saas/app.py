@@ -102,6 +102,48 @@ def public_performance(key: str):
 
 
 # ---------------------------------------------------------------------------
+# Copy-trading / signal distribution
+# ---------------------------------------------------------------------------
+@app.post("/signals/publish")
+def signals_publish(
+    key: str = Body(...),            # master (channel) license key
+    action: str = Body(...),         # buy / sell / close
+    symbol: str = Body(""),
+    lot: float = Body(0.0),
+    sl: float = Body(0.0),
+    tp: float = Body(0.0),
+    comment: str = Body(""),
+):
+    if action not in ("buy", "sell", "close"):
+        raise HTTPException(status_code=400, detail="action must be buy/sell/close")
+    v = db.validate_license(key)
+    if not v["valid"]:
+        raise HTTPException(status_code=401, detail=f"license {v['reason']}")
+    return db.publish_signal(key, action, symbol, lot, sl, tp, comment)
+
+
+@app.get("/signals/fetch")
+def signals_fetch(key: str = Query(...), channel: str = Query(...),
+                  since: int = Query(0)):
+    """Follower polls here. `key` = follower's own valid license; `channel`
+    = the master's key they subscribe to."""
+    v = db.validate_license(key)
+    if not v["valid"]:
+        raise HTTPException(status_code=401, detail=f"license {v['reason']}")
+    return {"signals": db.fetch_signals(channel, since)}
+
+
+@app.get("/signals/latest")
+def signals_latest(key: str = Query(...), channel: str = Query(...)):
+    """Flat latest-signal endpoint -- easy for the follower EA to parse."""
+    v = db.validate_license(key)
+    if not v["valid"]:
+        raise HTTPException(status_code=401, detail=f"license {v['reason']}")
+    sig = db.latest_signal(channel)
+    return sig or {"id": 0, "action": "none"}
+
+
+# ---------------------------------------------------------------------------
 # Billing (Stripe) - SKELETON
 # ---------------------------------------------------------------------------
 @app.post("/billing/webhook")

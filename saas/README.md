@@ -15,7 +15,15 @@
 | `GET  /license/validate` | **يستدعيها الـ EA** للتحقق (key + account) |
 | `POST /performance/report` | يدفع الجسر إحصاءاته (يوثَّق بالترخيص) |
 | `GET  /p/{key}` | **صفحة أداء عامة** للقراءة فقط |
+| `POST /signals/publish` | الماستر ينشر إشارة (key=مفتاحه، buy/sell/close) |
+| `GET  /signals/fetch` | المتابع يجلب الإشارات بعد since (key متابع + channel ماستر) |
+| `GET  /signals/latest` | أحدث إشارة (مسطّحة — يسهل على الـ EA قراءتها) |
 | `POST /billing/webhook` | Stripe (هيكل — يُوصَل بمفاتيح حقيقية) |
+
+## 📡 النسخ التلقائي (Copy-Trading)
+- **القناة = مفتاح ترخيص الماستر.** الماستر ينشر إشاراته، والمتابعون المرخّصون يجلبونها.
+- **الماستر تلقائياً**: فعّل في الجسر `SAAS_PUBLISH=true` (+ `SAAS_URL`, `SAAS_LICENSE_KEY`) فيبثّ كل صفقة (فتح/إغلاق) للمتابعين.
+- **المتابع**: بوت `MT5/Bots/SpirBot_Follower.mq5` — ضع `InpServerURL` و`InpFollowerKey` (ترخيصك) و`InpChannel` (مفتاح الماستر)، يستطلع `/signals/latest` وينفّذ. (whitelist الرابط في MT5).
 
 ## التشغيل محلياً
 ```bash
