@@ -47,7 +47,9 @@ int OnCalculate(const int rates_total, const int prev_calculated,
 {
    double atr[];
    ArraySetAsSeries(atr, false);
-   if(CopyBuffer(h_atr, 0, 0, rates_total, atr) <= 0)
+   // Require a full, bar-aligned copy; a partial copy would read out of
+   // range below. Retry next tick once ATR has enough history.
+   if(CopyBuffer(h_atr, 0, 0, rates_total, atr) < rates_total)
       return(prev_calculated);
 
    int start = (prev_calculated > 1) ? prev_calculated - 1 : 1;
