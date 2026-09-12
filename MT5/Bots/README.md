@@ -16,6 +16,7 @@
 | `SpirBot_LRCUTB.mq5` | Linear-Reg Candles + UT Bot | زخم | 500003 |
 | `SpirBot_2MACDSTO.mq5` | MACD مزدوج + Stochastic | زخم | 500004 |
 | `SpirBot_NWE.mq5` | Nadaraya-Watson Envelope + RSI | ارتداد | 500005 |
+| `SpirBot_Follower.mq5` | **نسخ تلقائي** — يستطلع قناة SaaS وينفّذ إشارات الماستر | 500900 |
 
 **الإعدادات المشتركة**: `InpLot`, `InpSL`, `InpTP` (نقاط), `InpMaxSpread`, `InpMagic` + معاملات كل استراتيجية.
 

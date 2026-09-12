@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS performance (
   max_dd      REAL,
   equity_json TEXT
 );
+CREATE TABLE IF NOT EXISTS signals (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel  TEXT NOT NULL,       -- publisher (master) license key = channel id
+  created  INTEGER NOT NULL,
+  action   TEXT NOT NULL,       -- buy / sell / close
+  symbol   TEXT,
+  lot      REAL,
+  sl       REAL,
+  tp       REAL,
+  comment  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_signals_channel ON signals(channel, id);
 """
 
 
@@ -154,4 +166,40 @@ def get_performance(license_key: str, path: Optional[str] = None) -> Optional[di
     with _conn(path) as c:
         row = c.execute("SELECT * FROM performance WHERE license_key=?",
                         (license_key,)).fetchone()
+        return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Copy-trading / signal distribution
+#   A "channel" is the master's license key. Masters publish; followers poll.
+# ---------------------------------------------------------------------------
+def publish_signal(channel: str, action: str, symbol: str = "",
+                   lot: float = 0.0, sl: float = 0.0, tp: float = 0.0,
+                   comment: str = "", path: Optional[str] = None) -> dict:
+    with _conn(path) as c:
+        cur = c.execute(
+            "INSERT INTO signals(channel, created, action, symbol, lot, sl, tp, comment) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (channel, int(time.time()), action, symbol or None, lot, sl, tp, comment or None),
+        )
+        return {"id": cur.lastrowid, "action": action, "symbol": symbol}
+
+
+def fetch_signals(channel: str, since_id: int = 0, limit: int = 50,
+                  path: Optional[str] = None) -> list:
+    """All signals on a channel with id > since_id (oldest first)."""
+    with _conn(path) as c:
+        rows = c.execute(
+            "SELECT id, created, action, symbol, lot, sl, tp, comment FROM signals "
+            "WHERE channel=? AND id>? ORDER BY id ASC LIMIT ?",
+            (channel, since_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def latest_signal(channel: str, path: Optional[str] = None) -> Optional[dict]:
+    """The single most recent signal on a channel (easy for EAs to poll)."""
+    with _conn(path) as c:
+        row = c.execute(
+            "SELECT id, created, action, symbol, lot, sl, tp, comment FROM signals "
+            "WHERE channel=? ORDER BY id DESC LIMIT 1", (channel,)).fetchone()
         return dict(row) if row else None

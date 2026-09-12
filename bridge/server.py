@@ -72,6 +72,27 @@ def notify_bg(text: str) -> None:
         asyncio.create_task(asyncio.to_thread(notify.send, text))
 
 
+def _publish_signal(action: str, symbol: str, lot: float) -> None:
+    """Broadcast a trade to copy-trading followers via the SaaS (blocking)."""
+    import json as _json
+    import urllib.request as _url
+    body = _json.dumps({"key": settings.saas_license_key, "action": action,
+                        "symbol": symbol, "lot": lot or 0.0}).encode()
+    req = _url.Request(f"{settings.saas_url}/signals/publish", data=body,
+                       headers={"Content-Type": "application/json"})
+    try:
+        with _url.urlopen(req, timeout=8) as r:
+            r.read()
+    except Exception as exc:  # never let a broadcast break trading
+        print(f"[saas] signal publish failed: {exc}")
+
+
+def publish_bg(action: str, symbol: str, lot: float) -> None:
+    """Master mode: broadcast this trade to followers, non-blocking."""
+    if settings.saas_publish and settings.saas_url and settings.saas_license_key:
+        asyncio.create_task(asyncio.to_thread(_publish_signal, action, symbol, lot))
+
+
 def _journal_row_count() -> int:
     try:
         with open(settings.journal_file, encoding="utf-8") as fh:
@@ -195,11 +216,15 @@ def process_signal(sig: Signal) -> Result:
         # Alert on the outcome (opened, or blocked by spread / risk guard).
         verb = "opened" if res["ok"] else "blocked"
         notify_bg(f"{sig.action.upper()} {symbol} {verb}: {res['detail']}")
+        if res["ok"]:
+            publish_bg(sig.action, symbol, sig.lot or 0.0)   # master broadcast
         return Result(ok=res["ok"], action=sig.action, detail=res["detail"],
                       ticket=res.get("ticket"), price=res.get("price"))
 
     if sig.action == "close":
         res = mt5_client.close_all(symbol)
+        if res["ok"]:
+            publish_bg("close", symbol, 0.0)
         return Result(ok=res["ok"], action="close", detail=res["detail"])
 
     if sig.action == "draw":
@@ -290,6 +315,7 @@ async def control(ctl: Control):
         # Immediate close via the bridge AND tell the EA to stand down.
         res = mt5_client.close_all()
         ea_commands.write_command("FLATTEN")
+        publish_bg("close", settings.symbol, 0.0)   # tell followers to close too
         notify_bg("⚠️ FLATTEN triggered: closed all + EA automation OFF")
         return {"ok": True, "detail": f"flatten: {res['detail']} + EA stand-down"}
     if a == "ea_auto":
@@ -303,13 +329,17 @@ async def control(ctl: Control):
     if a == "ea_risk_daily":
         return ea_commands.write_command("RISK", "MAX_DAILY", ctl.value or "0")
     if a in ("open_buy", "open_sell"):
-        return mt5_client.open_ecn(
-            action="buy" if a == "open_buy" else "sell",
+        side = "buy" if a == "open_buy" else "sell"
+        res = mt5_client.open_ecn(
+            action=side,
             lot=ctl.lot,
             sl_price=ctl.sl or 0.0,
             tp_price=ctl.tp or 0.0,
             comment="dashboard-manual",
         )
+        if res.get("ok"):
+            publish_bg(side, settings.symbol, ctl.lot or 0.0)   # master broadcast
+        return res
     if a == "modify":
         if ctl.ticket is None:
             return {"ok": False, "detail": "ticket required"}
