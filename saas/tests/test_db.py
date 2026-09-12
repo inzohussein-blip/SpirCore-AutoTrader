@@ -50,6 +50,17 @@ class TestSaasDB(unittest.TestCase):
         self.assertFalse(v["valid"])
         self.assertEqual(v["reason"], "expired")
 
+    def test_list_all_licenses(self):
+        ua = db.create_user("a@x.com", self.path)
+        ub = db.create_user("b@x.com", self.path)
+        db.issue_license(ua["id"], "111", "std", 30, self.path)
+        db.issue_license(ub["id"], "222", "pro", 30, self.path)
+        rows = db.list_all_licenses(self.path)
+        self.assertEqual(len(rows), 2)
+        emails = {r["email"] for r in rows}
+        self.assertEqual(emails, {"a@x.com", "b@x.com"})
+        self.assertIn("key", rows[0])
+
     def test_signals_publish_and_fetch(self):
         ch = "SPIR-master"
         s1 = db.publish_signal(ch, "buy", "XAUUSD", 0.1, 0, 0, "", self.path)

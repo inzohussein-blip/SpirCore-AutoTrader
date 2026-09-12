@@ -144,6 +144,16 @@ def list_licenses(user_id: int, path: Optional[str] = None) -> list:
         return [dict(r) for r in rows]
 
 
+def list_all_licenses(path: Optional[str] = None) -> list:
+    """Admin view: every license joined with its owner's email."""
+    with _conn(path) as c:
+        rows = c.execute(
+            "SELECT l.key, u.email, l.account, l.plan, l.expiry, l.active, l.created "
+            "FROM licenses l JOIN users u ON u.id = l.user_id "
+            "ORDER BY l.created DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Performance snapshots (pushed by a licensed bridge)
 # ---------------------------------------------------------------------------
