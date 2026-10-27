@@ -3,7 +3,7 @@
 نظام تداول هجين عابر للمنصات مخصص للذهب (XAUUSD) على منصة MetaTrader 5.
 A cross-platform hybrid trading system for Gold (XAUUSD) on MetaTrader 5.
 
-> 🚀 للتشغيل السريع: **[QUICKSTART.md](QUICKSTART.md)** · لتجميع أكواد MQL5: **[MT5/BUILD.md](MT5/BUILD.md)**.
+> 🚀 للتشغيل: **[QUICKSTART.md](QUICKSTART.md)** · تجميع MQL5: **[MT5/BUILD.md](MT5/BUILD.md)** · خطة التأجير: **[docs/RENTAL_BUSINESS_PLAN.md](docs/RENTAL_BUSINESS_PLAN.md)**.
 
 ---
 
