@@ -29,6 +29,9 @@ from fastapi.responses import HTMLResponse
 import db
 
 ADMIN_TOKEN = os.getenv("SAAS_ADMIN_TOKEN", "change-me-admin")
+# Shown in the client portal so subscribers know what to follow / open.
+MASTER_CHANNEL = os.getenv("SAAS_MASTER_CHANNEL", "")        # mode B: master key to follow
+DASHBOARD_URL = os.getenv("SAAS_DASHBOARD_URL", "http://127.0.0.1:8000/dashboard")  # mode A
 
 app = FastAPI(title="SpirCore SaaS", version="1.0")
 
@@ -92,6 +95,29 @@ def admin_page():
 def license_validate(key: str = Query(...), account: str = Query("")):
     """Called by the EA. Public by design; returns validity only."""
     return db.validate_license(key, account)
+
+
+# ---------------------------------------------------------------------------
+# Client portal (self-serve: a subscriber signs in with their license key)
+# ---------------------------------------------------------------------------
+@app.get("/me")
+def me(key: str = Query(...)):
+    """Client self-status. The license key authenticates the caller."""
+    v = db.validate_license(key)
+    if not v["valid"]:
+        raise HTTPException(status_code=401, detail=f"license {v['reason']}")
+    return {
+        "valid": True,
+        "plan": v.get("plan"),
+        "expiry": v.get("expiry"),
+        "channel": MASTER_CHANNEL,       # mode B: the master channel to follow
+        "dashboard_url": DASHBOARD_URL,  # mode A: the client's control dashboard
+    }
+
+
+@app.get("/portal", response_class=HTMLResponse)
+def portal():
+    return HTMLResponse(_PORTAL_HTML)
 
 
 # ---------------------------------------------------------------------------
@@ -278,5 +304,81 @@ async function load(){
   }catch(e){}
 }
 if(tok) load();
+</script>
+</body></html>"""
+
+
+# ---------------------------------------------------------------------------
+# Client portal page (self-contained; the client signs in with their key)
+# ---------------------------------------------------------------------------
+_PORTAL_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpirCore Portal</title>
+<style>
+  :root{--gold:#d4af37;--bg:#0f1116;--panel:#171a21;--bd:#2a2e38;--tx:#e8e8ea;--mut:#8a8f9c;--grn:#2e8b57;--red:#c0392b}
+  *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);margin:0;padding:22px;max-width:860px;margin:auto}
+  h1{color:var(--gold);font-size:22px} .mut{color:var(--mut);font-size:12px}
+  input,button{background:#0e1015;border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:8px 10px;font-size:13px}
+  button{cursor:pointer;font-weight:600} .gold{background:var(--gold);color:#14161c;border:none}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  section{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-top:14px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .ok{color:var(--grn)} .bad{color:var(--red)} code{color:var(--gold);word-break:break-all}
+  ol{margin:8px 0 0;padding-inline-start:20px;font-size:13px;color:var(--tx)} li{margin:4px 0}
+  a.btn{display:inline-block;text-decoration:none}
+  .disc{color:var(--mut);font-size:12px;border-top:1px solid var(--bd);padding-top:12px;margin-top:18px}
+</style></head><body>
+  <h1>&#9889; SpirCore &mdash; Client Portal</h1>
+  <div class="row"><input id="key" type="password" placeholder="your license key (SPIR-...)" style="width:280px">
+    <button class="gold" onclick="go()">Sign in</button>
+    <span id="status" class="mut"></span></div>
+
+  <section id="info" hidden></section>
+
+  <div id="modes" class="cards" hidden>
+    <section>
+      <h3 style="margin:0 0 8px">Mode A &mdash; Self-managed</h3>
+      <p class="mut">Run the bot on your own account; watch &amp; close trades yourself.</p>
+      <ol>
+        <li>Install MT5 + the SpirCore EA (see repo QUICKSTART &amp; BUILD).</li>
+        <li>Start the local Python bridge on your machine/VPS.</li>
+        <li>Open your control dashboard &rarr;</li>
+      </ol>
+      <p><a id="dash" class="btn gold" href="#" target="_blank" style="padding:8px 12px;border-radius:6px">Open dashboard</a></p>
+    </section>
+    <section>
+      <h3 style="margin:0 0 8px">Mode B &mdash; Copy-trading</h3>
+      <p class="mut">Mirror the master automatically; you keep full control of your account.</p>
+      <ol>
+        <li>Install <code>SpirBot_Follower.mq5</code> on your XAUUSD chart.</li>
+        <li>Set <b>InpFollowerKey</b> = your key, <b>InpChannel</b> = the channel below.</li>
+        <li>Whitelist the server URL in MT5 options.</li>
+      </ol>
+      <p>Channel to follow: <code id="chan">&mdash;</code></p>
+    </section>
+  </div>
+
+  <p class="disc">&#9888; Past performance does not guarantee future results. You keep full control of your own account and can close trades anytime. Informational only.</p>
+
+<script>
+const $=id=>document.getElementById(id);
+let key=localStorage.getItem("spir_portal")||""; $("key").value=key;
+function fmtDate(ts){ try{return new Date(ts*1000).toISOString().slice(0,10);}catch(e){return "-";} }
+async function go(){
+  key=$("key").value.trim(); localStorage.setItem("spir_portal",key);
+  if(!key){ $("status").textContent="enter your key"; return; }
+  try{
+    const r=await fetch("/me?key="+encodeURIComponent(key));
+    if(r.status!==200){ const j=await r.json().catch(()=>({})); $("status").textContent=j.detail||"invalid key"; $("status").className="mut bad"; $("modes").hidden=true; $("info").hidden=true; return; }
+    const d=await r.json();
+    $("status").textContent="signed in"; $("status").className="mut ok";
+    $("info").hidden=false;
+    $("info").innerHTML=`<b>Plan:</b> ${d.plan||'-'} &nbsp; <b>Expires:</b> ${fmtDate(d.expiry)}`;
+    $("dash").href=d.dashboard_url||"#";
+    $("chan").textContent=d.channel||"(ask your provider)";
+    $("modes").hidden=false;
+  }catch(e){ $("status").textContent="error: "+e.message; }
+}
+if(key) go();
 </script>
 </body></html>"""
