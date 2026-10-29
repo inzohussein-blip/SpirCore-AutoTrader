@@ -52,12 +52,21 @@
   .tokbar{display:flex;gap:8px;align-items:center}
   .tokbar input{width:170px}
   small.warn{color:var(--muted)}
+  .lic{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);
+    background:#0e1015;color:var(--muted);white-space:nowrap}
+  .lic.ok{color:var(--green);border-color:var(--green)}
+  .lic.bad{color:var(--red);border-color:var(--red)}
+  .lic-note{background:#2a1416;border:1px solid var(--red);color:#f1c6c2;
+    border-radius:8px;padding:10px 12px;margin-top:14px;font-size:13px;display:none}
+  .lic-note a{color:var(--gold)}
+  button.disabled,button:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
 <header>
   <div class="brand">⚡ SpirCore Dashboard</div>
   <div class="row">
+    <span id="licPill" class="lic" title="license status">license —</span>
     <span><span id="connDot" class="dot off"></span><span id="connTxt">connecting…</span></span>
     <div class="tokbar">
       <input id="token" type="password" placeholder="control token" />
@@ -67,6 +76,8 @@
 </header>
 
 <div class="wrap">
+  <div id="licNote" class="lic-note"></div>
+
   <!-- Top metric cards -->
   <div class="grid cards">
     <div class="card"><div class="k">MT5</div><div class="v" id="mt5State">—</div></div>
@@ -84,7 +95,7 @@
       <div class="ctl">
         <div class="k">Automation (EA)</div>
         <div class="row">
-          <button class="b-green" onclick="ctl('ea_auto',{value:'ON'})">AUTO ON</button>
+          <button class="b-green" data-gated onclick="ctl('ea_auto',{value:'ON'})">AUTO ON</button>
           <button class="b-slate" onclick="ctl('ea_auto',{value:'OFF'})">AUTO OFF</button>
         </div>
       </div>
@@ -100,14 +111,14 @@
               <option>HYBRID</option><option>AUTO</option>
             </optgroup>
           </select>
-          <button class="b-gold" onclick="ctl('ea_strategy',{value:document.getElementById('strat').value})">Set</button>
+          <button class="b-gold" data-gated onclick="ctl('ea_strategy',{value:document.getElementById('strat').value})">Set</button>
         </div>
       </div>
       <div class="ctl">
         <div class="k">Max daily loss % (EA)</div>
         <div class="row">
           <input id="riskDaily" type="number" step="0.5" style="width:90px" placeholder="5.0" />
-          <button class="b-gold" onclick="ctl('ea_risk_daily',{value:document.getElementById('riskDaily').value})">Apply</button>
+          <button class="b-gold" data-gated onclick="ctl('ea_risk_daily',{value:document.getElementById('riskDaily').value})">Apply</button>
         </div>
       </div>
       <div class="ctl">
@@ -125,8 +136,8 @@
           <input id="mTp" type="number" step="0.01" style="width:90px" placeholder="TP (opt)" />
         </div>
         <div class="row" style="margin-top:8px">
-          <button class="b-green" onclick="manualOrder('open_buy')">BUY</button>
-          <button class="b-red" onclick="manualOrder('open_sell')">SELL</button>
+          <button class="b-green" data-gated onclick="manualOrder('open_buy')">BUY</button>
+          <button class="b-red" data-gated onclick="manualOrder('open_sell')">SELL</button>
         </div>
       </div>
     </div>
@@ -283,6 +294,48 @@ function drawCurve(curve){
     `<polyline points="${pts}" fill="none" stroke="${curve[curve.length-1]>=0?'#2e8b57':'#c0392b'}" stroke-width="2"/>`;
 }
 
+// ---- License status (plan/expiry + new-exposure gate) ----
+async function loadLicense(){
+  try{
+    const res = await fetch("/license");
+    const s = await res.json();
+    renderLicense(s);
+  }catch(e){ /* bridge down; snapshot WS already shows offline */ }
+}
+function renderLicense(s){
+  const pill = $("licPill"), note = $("licNote");
+  if(!s.configured){
+    pill.className = "lic"; pill.textContent = "self-hosted"; pill.title = "no SaaS license configured — ungated";
+    note.style.display = "none"; setGated(true); return;
+  }
+  if(s.valid){
+    pill.className = "lic ok";
+    pill.textContent = "✓ " + (s.plan||"licensed") + (s.expiry? " · exp "+s.expiry : "");
+    pill.title = "license valid";
+    note.style.display = "none"; setGated(true);
+  }else{
+    pill.className = "lic bad";
+    pill.textContent = "license " + (s.reason||"invalid");
+    pill.title = "new trades are blocked until renewed";
+    const blocked = s.blocks_new;
+    note.style.display = blocked ? "block" : "none";
+    note.innerHTML = "⚠️ <b>License "+(s.reason||"invalid")+".</b> "+
+      (blocked
+        ? "Opening new trades and arming automation are blocked. "+
+          "You can still <b>close</b>, <b>flatten</b> and <b>modify</b> your own positions. "+
+          (s.dashboard_url? "Renew via your portal.":"Renew your subscription to resume.")
+        : "Gate is off (LICENSE_GATE=false) — controls stay enabled.");
+    setGated(!blocked);
+  }
+}
+// enable/disable every button marked data-gated
+function setGated(enabled){
+  document.querySelectorAll("button[data-gated]").forEach(b=>{
+    b.disabled = !enabled;
+    b.classList.toggle("disabled", !enabled);
+  });
+}
+
 // ---- Persist a few UI preferences locally ----
 const PREF_KEYS = ["mLot","strat","riskDaily"];
 function restorePrefs(){
@@ -297,7 +350,9 @@ PREF_KEYS.forEach(k => { const el=$(k); if(el) el.addEventListener("change", ()=
 restorePrefs();
 connect();
 loadStats();
+loadLicense();
 setInterval(loadStats, 10000);
+setInterval(loadLicense, 30000);
 logEvent("dashboard ready");
 </script>
 </body>

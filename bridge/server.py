@@ -93,6 +93,68 @@ def publish_bg(action: str, symbol: str, lot: float) -> None:
         asyncio.create_task(asyncio.to_thread(_publish_signal, action, symbol, lot))
 
 
+# --- License status (dashboard gate) -------------------------------------
+# Cache the SaaS /me result so clicking controls doesn't hammer the SaaS.
+_license_cache: dict = {"at": 0.0, "status": None}
+
+
+def _license_status(force: bool = False) -> dict:
+    """Validate the bridge's configured license against the SaaS /me endpoint.
+
+    Returns a dict the dashboard can render and the control gate can read:
+      {configured, valid, plan, expiry, channel, dashboard_url, reason}
+    When SaaS is not configured the bridge is self-hosted/dev: never gated
+    (configured=False, valid=True). Fail-closed on SaaS errors ONLY for the
+    gate decision — but closing positions is always allowed regardless.
+    """
+    import time
+
+    if not (settings.saas_url and settings.saas_license_key):
+        return {"configured": False, "valid": True, "plan": None,
+                "expiry": None, "channel": None, "dashboard_url": None,
+                "reason": "no-saas"}
+
+    now = time.time()
+    cached = _license_cache["status"]
+    if (not force and cached is not None
+            and now - _license_cache["at"] < max(5, settings.license_cache_sec)):
+        return cached
+
+    import json as _json
+    import urllib.parse as _parse
+    import urllib.request as _url
+
+    q = _parse.urlencode({"key": settings.saas_license_key})
+    url = f"{settings.saas_url}/me?{q}"
+    status = {"configured": True, "valid": False, "plan": None,
+              "expiry": None, "channel": None, "dashboard_url": None,
+              "reason": "unknown"}
+    try:
+        with _url.urlopen(url, timeout=8) as r:
+            data = _json.loads(r.read().decode() or "{}")
+        status.update({
+            "valid": bool(data.get("valid")),
+            "plan": data.get("plan"),
+            "expiry": data.get("expiry"),
+            "channel": data.get("channel"),
+            "dashboard_url": data.get("dashboard_url"),
+            "reason": "ok" if data.get("valid") else "invalid",
+        })
+    except Exception as exc:  # HTTP 401 (bad key) or network error -> fail closed
+        msg = str(exc)
+        status["reason"] = "unauthorized" if "401" in msg else f"unreachable: {msg}"
+    _license_cache.update({"at": now, "status": status})
+    return status
+
+
+def _license_blocks_new_exposure() -> bool:
+    """True only when the gate is on, SaaS is configured, and license invalid."""
+    if not settings.license_gate:
+        return False
+    st = _license_status()
+    return st["configured"] and not st["valid"]
+
+
 def _journal_row_count() -> int:
     try:
         with open(settings.journal_file, encoding="utf-8") as fh:
@@ -299,12 +361,38 @@ def snapshot():
     return _snapshot()
 
 
+@app.get("/license")
+def license_status(refresh: bool = False):
+    """Dashboard reads this to show plan/expiry and whether new exposure is
+    gated. Never exposes the license key itself."""
+    st = _license_status(force=refresh)
+    return {**st, "gate": settings.license_gate,
+            "blocks_new": _license_blocks_new_exposure()}
+
+
+# Actions that create NEW exposure or re-arm automation -> require a valid
+# license when the gate is active. Risk-reducing actions (close/flatten/
+# modify, AUTO OFF) are NEVER gated: the client always controls their money.
+_GATED_ACTIONS = {"open_buy", "open_sell", "ea_strategy", "ea_risk_daily"}
+
+
 @app.post("/control")
 async def control(ctl: Control):
     if ctl.secret != settings.auth_token:
         raise HTTPException(status_code=401, detail="unauthorized")
 
     a = ctl.action
+
+    # License gate: block new exposure / arming automation when invalid.
+    gated = a in _GATED_ACTIONS or (a == "ea_auto"
+                                    and (ctl.value or "").upper() == "ON")
+    if gated and _license_blocks_new_exposure():
+        st = _license_status()
+        raise HTTPException(
+            status_code=403,
+            detail=f"license {st['reason']} — renew to open new trades; "
+                   f"you can still close/flatten your positions")
+
     if a == "close_all":
         return mt5_client.close_all()
     if a == "close_ticket":

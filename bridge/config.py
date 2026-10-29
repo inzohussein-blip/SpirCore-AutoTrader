@@ -114,6 +114,13 @@ class Settings:
     saas_license_key: str = _get("SAAS_LICENSE_KEY", "")
     # Act as a copy-trading MASTER: broadcast our trades to followers.
     saas_publish: bool = _get("SAAS_PUBLISH", "false").lower() == "true"
+    # License gate for the dashboard: when SaaS is configured and the license
+    # is invalid/expired, block NEW exposure (open orders, automation ON) while
+    # ALWAYS allowing the client to close/flatten/modify their own positions.
+    # Has no effect unless SAAS_URL + SAAS_LICENSE_KEY are set (self-hosted dev
+    # without SaaS is never gated). Seconds to cache the /me result.
+    license_gate: bool = _get("LICENSE_GATE", "true").lower() == "true"
+    license_cache_sec: int = _get_int("LICENSE_CACHE_SEC", 60)
 
 
 settings = Settings()
