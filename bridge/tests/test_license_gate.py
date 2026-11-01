@@ -31,10 +31,17 @@ os.environ["LICENSE_GATE"] = "true"
 
 import config  # noqa: E402
 importlib.reload(config)
-import server  # noqa: E402
-importlib.reload(server)
 
-from fastapi.testclient import TestClient  # noqa: E402
+# fastapi is NOT installed in CI (it only byte-compiles; MetaTrader5 is
+# Windows-only). Skip the HTTP-layer tests there; the license logic that
+# does not need the app is still exercised via the imported helpers.
+try:
+    import server  # noqa: E402
+    importlib.reload(server)
+    from fastapi.testclient import TestClient  # noqa: E402
+    HAVE_SERVER = True
+except Exception:  # ModuleNotFoundError for fastapi/pydantic, etc.
+    HAVE_SERVER = False
 
 TOK = config.settings.auth_token
 
@@ -50,6 +57,7 @@ EXPIRED = {"configured": True, "valid": False, "plan": None, "expiry": None,
            "channel": None, "dashboard_url": None, "reason": "expired"}
 
 
+@unittest.skipUnless(HAVE_SERVER, "fastapi not installed (CI byte-compiles only)")
 class TestLicenseGate(unittest.TestCase):
     def setUp(self):
         # TestClient without `with` -> lifespan (MT5 connect) does not run.
@@ -100,6 +108,34 @@ class TestLicenseGate(unittest.TestCase):
         _seed(VALID)
         r = self.c.post("/control", json={"secret": "wrong", "action": "close_all"})
         self.assertEqual(r.status_code, 401)
+
+
+@unittest.skipUnless(HAVE_SERVER, "fastapi not installed (CI byte-compiles only)")
+class TestTimeMachineRoute(unittest.TestCase):
+    """The /timemachine route is MT5-backed, so stub the MT5 call and just
+    confirm wiring + the sims clamp. The simulation math is covered by
+    test_timemachine.py."""
+    def setUp(self):
+        self.c = TestClient(server.app)
+        self._orig = server.tm.from_mt5
+
+    def tearDown(self):
+        server.tm.from_mt5 = self._orig
+
+    def test_route_passes_args_and_clamps_sims(self):
+        seen = {}
+
+        def fake(sl, tp, direction, entry, bars, horizon, sims, seed):
+            seen.update(sl=sl, tp=tp, direction=direction, sims=sims)
+            return {"ok": True, "p_target": 0.3, "p_stop": 0.3, "p_open": 0.4}
+
+        server.tm.from_mt5 = fake
+        r = self.c.post("/timemachine", json={"direction": "BUY", "sl": 3344,
+                        "tp": 3362, "sims": 999999})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["ok"])
+        self.assertEqual(seen["direction"], "buy")   # normalized
+        self.assertLessEqual(seen["sims"], 50000)     # clamped
 
 
 if __name__ == "__main__":

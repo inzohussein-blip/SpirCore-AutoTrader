@@ -104,6 +104,28 @@ def spread_points(symbol: Optional[str] = None) -> int:
     return int(round((tick.ask - tick.bid) / info.point))
 
 
+def current_price(symbol: Optional[str] = None) -> float:
+    """Mid price (bid+ask)/2, or 0.0 if the market can't be read."""
+    tick = mt5.symbol_info_tick(_sym(symbol))
+    if tick is None or tick.ask <= 0 or tick.bid <= 0:
+        return 0.0
+    return (tick.ask + tick.bid) / 2.0
+
+
+def copy_bars(count: int = 600, symbol: Optional[str] = None,
+              timeframe=None) -> list:
+    """Recent OHLC bars as plain dicts (newest last) for the Time Machine.
+    Defaults to M5 — enough history over ~2 days at 600 bars."""
+    s = _sym(symbol)
+    tf = timeframe if timeframe is not None else mt5.TIMEFRAME_M5
+    rates = mt5.copy_rates_from_pos(s, tf, 0, max(2, count))
+    if rates is None:
+        return []
+    return [{"time": int(r["time"]), "open": float(r["open"]),
+             "high": float(r["high"]), "low": float(r["low"]),
+             "close": float(r["close"])} for r in rates]
+
+
 def spread_ok(symbol: Optional[str] = None) -> bool:
     sp = spread_points(symbol)
     if sp > settings.max_spread_pts:

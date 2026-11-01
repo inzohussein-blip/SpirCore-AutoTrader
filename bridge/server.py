@@ -33,9 +33,11 @@ from pydantic import ValidationError
 import commands as ea_commands
 import mt5_client
 import notify
+import timemachine as tm
 from config import settings
 from levels import write_levels
 from models import Control, Result, Signal
+from pydantic import BaseModel
 
 DASHBOARD_HTML = os.path.join(os.path.dirname(__file__), "dashboard.html")
 
@@ -359,6 +361,28 @@ def _snapshot() -> dict:
 @app.get("/snapshot")
 def snapshot():
     return _snapshot()
+
+
+class TimeMachineReq(BaseModel):
+    direction: str                      # "buy" or "sell"
+    sl: float
+    tp: float
+    entry: float | None = None          # default: current MT5 price
+    sims: int = tm.DEFAULT_SIMS
+    horizon: int = tm.DEFAULT_HORIZON
+    seed: int = tm.DEFAULT_SEED
+    bars: int = 600
+
+
+@app.post("/timemachine")
+async def timemachine(req: TimeMachineReq):
+    """Pre-trade Monte-Carlo simulation over recent XAUUSD bars. Read-only:
+    it places NO order and is never a profit guarantee. Runs off the event
+    loop so a big simulation never stalls the live dashboard feed."""
+    sims = max(100, min(50000, req.sims))      # keep it bounded
+    return await asyncio.to_thread(
+        tm.from_mt5, req.sl, req.tp, req.direction.lower(), req.entry,
+        req.bars, req.horizon, sims, req.seed)
 
 
 @app.get("/license")

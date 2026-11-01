@@ -143,6 +143,31 @@
     </div>
   </section>
 
+  <!-- Time Machine -->
+  <section>
+    <h2>⏳ Time Machine — pre-trade simulation</h2>
+    <div class="row">
+      <select id="tmDir"><option value="buy">BUY</option><option value="sell">SELL</option></select>
+      <input id="tmEntry" type="number" step="0.01" style="width:110px" placeholder="entry (opt)" />
+      <input id="tmSl" type="number" step="0.01" style="width:100px" placeholder="SL" />
+      <input id="tmTp" type="number" step="0.01" style="width:100px" placeholder="TP" />
+      <input id="tmSims" type="number" step="1000" style="width:90px" placeholder="sims 10000" />
+      <button class="b-gold" id="tmRun" onclick="runTimeMachine()">Simulate</button>
+    </div>
+    <div id="tmOut" style="margin-top:12px;display:none">
+      <div class="stat-row">
+        <div class="s"><div class="k">Target first</div><div class="v pos" id="tmTgt">—</div></div>
+        <div class="s"><div class="k">Stop first</div><div class="v neg" id="tmStp">—</div></div>
+        <div class="s"><div class="k">Still open</div><div class="v" id="tmOpn">—</div></div>
+        <div class="s"><div class="k">R:R</div><div class="v gold" id="tmRR">—</div></div>
+        <div class="s"><div class="k">Avg R</div><div class="v" id="tmAvgR">—</div></div>
+      </div>
+      <div id="tmVerdict" style="font-weight:700;margin:4px 0"></div>
+      <div id="tmHist" class="muted" style="font-size:12px"></div>
+      <small class="warn" id="tmDisc"></small>
+    </div>
+  </section>
+
   <!-- Open positions -->
   <section>
     <h2>Open positions</h2>
@@ -292,6 +317,39 @@ function drawCurve(curve){
   svg.innerHTML =
     `<line x1="0" y1="${zeroY}" x2="600" y2="${zeroY}" stroke="#2a2e38" stroke-width="1"/>`+
     `<polyline points="${pts}" fill="none" stroke="${curve[curve.length-1]>=0?'#2e8b57':'#c0392b'}" stroke-width="2"/>`;
+}
+
+// ---- Time Machine (pre-trade Monte-Carlo simulation; places NO order) ----
+async function runTimeMachine(){
+  const sl = parseFloat($("tmSl").value), tp = parseFloat($("tmTp").value);
+  if(!(sl>0) || !(tp>0)){ logEvent("Time Machine: set SL and TP"); return; }
+  const body = { direction:$("tmDir").value, sl, tp };
+  const entry = parseFloat($("tmEntry").value); if(entry>0) body.entry = entry;
+  const sims = parseInt($("tmSims").value); if(sims>0) body.sims = sims;
+  const btn = $("tmRun"); btn.disabled = true; btn.textContent = "Simulating…";
+  try{
+    const res = await fetch("/timemachine", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    const r = await res.json();
+    if(!r.ok){ logEvent("Time Machine: " + (r.detail||"error")); $("tmOut").style.display="none"; return; }
+    $("tmOut").style.display = "block";
+    const pct = x => (x*100).toFixed(1) + "%";
+    $("tmTgt").textContent = pct(r.p_target);
+    $("tmStp").textContent = pct(r.p_stop);
+    $("tmOpn").textContent = pct(r.p_open);
+    $("tmRR").textContent = r.rr;
+    $("tmAvgR").textContent = r.avg_r;
+    $("tmAvgR").className = "v " + cls(r.avg_r);
+    $("tmVerdict").textContent = r.verdict;
+    const h = r.history || {};
+    $("tmHist").textContent = h.ok
+      ? `History: ${h.target} target / ${h.stop} stop / ${h.open} open over ${h.trials} recent bars`
+      : "";
+    $("tmDisc").textContent = "⚠️ " + (r.disclaimer || "Simulation, not a profit guarantee.")
+      + `  (${r.sims} sims · ${r.pool} bars · entry ${r.entry})`;
+    logEvent(`Time Machine ${body.direction.toUpperCase()}: ${pct(r.p_target)} target / ${pct(r.p_stop)} stop`);
+  }catch(e){ logEvent("Time Machine error: " + e.message); }
+  finally{ btn.disabled = false; btn.textContent = "Simulate"; }
 }
 
 // ---- License status (plan/expiry + new-exposure gate) ----
